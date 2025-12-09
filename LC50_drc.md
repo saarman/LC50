@@ -4,6 +4,7 @@ Your Title
 - [Example](#example)
 - [Green, Oct 23rd, at 24 hours](#green-oct-23rd-at-24-hours)
 - [Green, Oct 8, 24 hours](#green-oct-8-24-hours)
+- [Green, Dec 3rd, at 36 hours](#green-dec-3rd-at-36-hours)
 
 # Example
 
@@ -202,3 +203,88 @@ plot(model, log = "x",
      ylab = "Proportion mortality",
      main = "Concentration–Response Curve")
 ```
+
+# Green, Dec 3rd, at 36 hours
+
+``` r
+library(drc)
+library(tidyr)
+library(dplyr)
+
+# 1. Create dataframe
+bioassay <- data.frame(
+  conc = c(0.0005, 0.005, 0.05, 0.5, 5, 50, 500),  # concentrations (ppm)
+  dead1 = c(1,2,1,14,13,15,20),
+  dead2 = c(1,1,2,11,16,16,25),
+  total = 25
+)
+
+# Convert to long format (one row per replicate)
+bioassay_long <- bioassay %>%
+  pivot_longer(cols = c(dead1, dead2),
+               names_to = "replicate",
+               values_to = "dead") %>%
+  mutate(total = total)  # total is the same for both rows
+
+bioassay_long
+```
+
+    ## # A tibble: 14 × 4
+    ##        conc total replicate  dead
+    ##       <dbl> <dbl> <chr>     <dbl>
+    ##  1   0.0005    25 dead1         1
+    ##  2   0.0005    25 dead2         1
+    ##  3   0.005     25 dead1         2
+    ##  4   0.005     25 dead2         1
+    ##  5   0.05      25 dead1         1
+    ##  6   0.05      25 dead2         2
+    ##  7   0.5       25 dead1        14
+    ##  8   0.5       25 dead2        11
+    ##  9   5         25 dead1        13
+    ## 10   5         25 dead2        16
+    ## 11  50         25 dead1        15
+    ## 12  50         25 dead2        16
+    ## 13 500         25 dead1        20
+    ## 14 500         25 dead2        25
+
+``` r
+# 2. fit the probit model
+model <- drm(dead/total ~ conc, 
+             weights = total, 
+             data = bioassay_long,
+             fct  = LN.2(),     # log-normal 2-parameter model
+             type = "binomial")
+
+summary(model)
+```
+
+    ## 
+    ## Model fitted: Log-normal with lower limit at 0 and upper limit at 1 (2 parms)
+    ## 
+    ## Parameter estimates:
+    ## 
+    ##               Estimate Std. Error t-value   p-value    
+    ## b:(Intercept) 0.224469   0.021065 10.6560 < 2.2e-16 ***
+    ## e:(Intercept) 3.209257   1.175147  2.7309  0.006315 ** 
+    ## ---
+    ## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
+
+``` r
+ED(model, c(50, 90), interval = "delta")
+```
+
+    ## 
+    ## Estimated effective doses
+    ## 
+    ##          Estimate Std. Error      Lower      Upper
+    ## e:1:50    3.20926    1.17515    0.90601    5.51250
+    ## e:1:90  968.05894  679.85563 -364.43361 2300.55148
+
+``` r
+plot(model, log = "x",
+     xlab = "Concentration (ppm)",
+     ylab = "Proportion mortality",
+     main = "Concentration–Response Curve")
+```
+
+![](LC50_drc_files/figure-gfm/unnamed-chunk-4-1.png)<!-- -->

@@ -125,3 +125,44 @@ plot(model, log = "x",
      ylab = "Proportion mortality",
      main = "Concentration–Response Curve")
 ```
+
+# Green, Dec 3rd, at 36 hours
+
+```{r}
+library(drc)
+library(tidyr)
+library(dplyr)
+
+# 1. Create dataframe
+bioassay <- data.frame(
+  conc = c(0.0005, 0.005, 0.05, 0.5, 5, 50, 500),  # concentrations (ppm)
+  dead1 = c(1,2,1,14,13,15,20),
+  dead2 = c(1,1,2,11,16,16,25),
+  total = 25
+)
+
+# Convert to long format (one row per replicate)
+bioassay_long <- bioassay %>%
+  pivot_longer(cols = c(dead1, dead2),
+               names_to = "replicate",
+               values_to = "dead") %>%
+  mutate(total = total)  # total is the same for both rows
+
+bioassay_long
+
+# 2. fit the probit model
+model <- drm(dead/total ~ conc, 
+             weights = total, 
+             data = bioassay_long,
+             fct  = LN.2(),     # log-normal 2-parameter model
+             type = "binomial")
+
+summary(model)
+
+ED(model, c(50, 90), interval = "delta")
+
+plot(model, log = "x",
+     xlab = "Concentration (ppm)",
+     ylab = "Proportion mortality",
+     main = "Concentration–Response Curve")
+```
