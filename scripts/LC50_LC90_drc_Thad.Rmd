@@ -1,16 +1,34 @@
 ---
 title: "Thad's Bioassays \n Probit - LC50 and LC90"
+author: "Norah Saarman"
+date: "`r Sys.Date()`"
 output:
   github_document:
     toc: true
-    toc_depth: 2
+knit: (function(input, ...) {
+    rmarkdown::render(
+      input,
+      output_dir = "../scripts_knitted_md", 
+      envir = globalenv()
+    )
+  })
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(
+  echo = TRUE,
+  # Saves PNGs to the root /figures folder
+  fig.path = "../figures/knitted_mds/" 
+)
 ```
 
-
+RStudio Configuration:
+   - **R version:** R 4.4.0 (Geospatial packages)  
+   - **Number of cores:** 4 (up to 32 available)   
+   - **Account:** saarman-np  
+   - **Partition:** saarman-np (now auto allows multiple simultaneous jobs)  
+   - **Memory per job:** 16G (cluster limit: 1000G total; avoid exceeding half)
+   
 
 ```{r}
 library(drc)
@@ -29,103 +47,7 @@ summary(model)
 ED(model, c(50, 90), interval = "delta")  # LC50, LC90, and 95% CIs
 
 ```
-
-# Green, Oct 23rd, 2025: at 24 hours
-
-```{r}
-library(drc)
-library(tidyr)
-library(dplyr)
-
-# 1. Create dataframe
-bioassay <- data.frame(
-  conc = c(0, 0.00025, 0.001, 0.0025, 0.01),  # concentrations (ppm)
-  dead1 = c(1, 3, 2, 7, 2),
-  dead2 = c(0, 3, 2, 0, 9),
-  dead3 = c(6, 5, 7, 4, 10),
-  total = 25
-)
-
-# Convert to long format (one row per replicate)
-bioassay_long <- data.frame(
-  conc  = rep(bioassay$conc,3),
-  dead  = c(bioassay$dead1, bioassay$dead2, bioassay$dead3),
-  total = rep(bioassay$total,3)
-)
-
-bioassay_long
-
-# 2. fit the probit model
-
-model <- drm(dead/total ~ conc, 
-             weights = total, 
-             data = bioassay_long,
-             fct = LN.2(),   # log-normal 2-parameter model
-             type = "binomial")
-
-summary(model)
-
-# 3. Estimate LC50 and LC90
-ED(model, c(50, 90), interval = "delta")
-
-
-# 4. Plot the concentration–response curve
-plot(model, log = "x",
-     xlab = "Concentration (ppm)",
-     ylab = "Proportion mortality",
-     main = "Concentration–Response Curve")
-```
-
-Interpretation of these results:
-the slope parameter (b) is highly significant (p < 0.001),
-
-but the LC₅₀ parameter (e) is not statistically significant (p = 0.29).
-
-Understanding the parameters:
-Parameter	Meaning	Estimate	Interpretation
-b:(Intercept)	slope of the probit/log-normal curve	0.226 ± 0.054	Significant (p < 0.001) → there is a measurable change in mortality with concentration. The positive slope indicates increasing mortality with dose.
-e:(Intercept)	log₁₀(LC₅₀)	0.099 ± 0.094	Not significant (p = 0.29). This means the estimated LC₅₀ (≈ 10^0.099 ≈ 1.26 ppm) is imprecise—its confidence interval still overlaps very low values.
-
-# Green, Oct 8, 2025: 24 hours
-```{r }
-# 1. Create dataframe
-bioassay <- data.frame(
-  conc = c(0, 0.0025, 0.025),  # concentrations (ppm)
-  dead1 = c(25-24, 25-3, 25-9),
-  dead2 = c(25-24, 25-3, 25-4),
-  dead3 = c(25-23, 25-3, 25-5),
-  total = 25
-)
-
-# Convert to long format (one row per replicate)
-bioassay_long <- data.frame(
-  conc  = rep(bioassay$conc, 3),
-  dead  = c(bioassay$dead1, bioassay$dead2, bioassay$dead3),
-  total = rep(bioassay$total, 3)
-)
-
-bioassay_long
-
-# 2. fit the probit model
-model <- drm(dead/total ~ conc, 
-             weights = total, 
-             data = bioassay_long,
-             fct = LN.2(),   # log-normal 2-parameter model
-             type = "binomial")
-
-summary(model)
-
-# 3. Estimate LC50 and LC90
-ED(model, c(50, 90), interval = "delta")
-
-# 4. Plot the concentration–response curve
-plot(model, log = "x",
-     xlab = "Concentration (ppm)",
-     ylab = "Proportion mortality",
-     main = "Concentration–Response Curve")
-```
-
-# Green, Dec 3rd, 2025: at 36 hours
+# Green (G3), Dec 3rd, 2025: at 36 hours  
 
 ```{r}
 library(drc)
@@ -165,10 +87,10 @@ plot(model, log = "x",
      ylab = "Proportion mortality",
      main = "Concentration–Response Curve")
 ```
+  
+# Green (G4) Feb 10, 2026: 24 hours  
 
-# Green (G4) Feb 10, 2026: 24 hours
-
-## Including all, including control 0 ppm
+## Including all, including control 0 ppm  
 ```{r}
 # 1. Create dataframe, including Controls (zero deaths FYI)
 bioassay <- data.frame(
@@ -206,8 +128,8 @@ plot(model, log = "x",
      ylab = "Proportion mortality",
      main = "Concentration–Response Curve")
 ```
-
-## Excluding control (0 ppm)
+  
+## Excluding control (0 ppm)  
 ```{r}
 # 1. Create dataframe, excluding Control (zero deaths FYI)
 bioassay <- data.frame(
@@ -244,15 +166,55 @@ plot(model, log = "x",
      xlab = "Concentration (ppm)",
      ylab = "Proportion mortality",
      main = "Concentration–Response Curve")
-```
-## Excluding 10, 30 ppm
+```  
+
+## Excluding control (0 ppm), 10 ppm
+```{r}
+# 1. Create dataframe, excluding Control (zero deaths FYI)
+bioassay <- data.frame(
+  conc = c(30,90,270,810),  # concentrations (ppm)
+  dead1 = c(25-23, 25-23, 25-13, 25-11),
+  dead2 = c(25-23, 25-22, 25-16, 25-4),
+  dead3 = c(25-21, 25-21, 25-17, 25-7),
+  total = 25
+)
+
+# Convert to long format (one row per replicate)
+bioassay_long <- bioassay %>%
+  pivot_longer(cols = c(dead1, dead2, dead3),
+               names_to = "replicate",
+               values_to = "dead") %>%
+  mutate(total = total)  # total is the same for both rows
+
+bioassay_long
+
+# 2. fit the probit model
+model <- drm(dead/total ~ conc, 
+             weights = total, 
+             data = bioassay_long,
+             fct = LN.2(),   # log-normal 2-parameter model
+             type = "binomial")
+
+summary(model)
+
+# 3. Estimate LC50 and LC90
+ED(model, c(50, 90), interval = "delta")
+
+# 4. Plot the concentration–response curve
+plot(model, log = "x",
+     xlab = "Concentration (ppm)",
+     ylab = "Proportion mortality",
+     main = "Concentration–Response Curve")
+```  
+
+## Excluding control (0 ppm), 10 ppm, 30 ppm  
 ```{r}
 # 1. Create dataframe, excluding 10 ppm, 30 ppm
 bioassay <- data.frame(
-  conc = c(0, 90,270,810),  # concentrations (ppm)
-  dead1 = c(0, 25-23, 25-13, 25-11),
-  dead2 = c(0, 25-22, 25-16, 25-4),
-  dead3 = c(0, 25-21, 25-17, 25-7),
+  conc = c(90,270,810),  # concentrations (ppm)
+  dead1 = c(25-23, 25-13, 25-11),
+  dead2 = c(25-22, 25-16, 25-4),
+  dead3 = c(25-21, 25-17, 25-7),
   total = 25
 )
 
