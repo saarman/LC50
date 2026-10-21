@@ -35,18 +35,7 @@ library(drc)
 library(tidyr)
 library(dplyr)
 ```
-# Example
-```{r, eval=FALSE}
-# Example dataset
-data(metallo)
 
-# Fit a probit model
-model <- drm(dead/total ~ conc, weights = total, data = metallo,
-             fct = LN.2(), type = "binomial")
-summary(model)
-ED(model, c(50, 90), interval = "delta")  # LC50, LC90, and 95% CIs
-
-```
 # Green (G3), Dec 3rd, 2025: at 36 hours  
 
 ```{r}
@@ -245,3 +234,268 @@ plot(model, log = "x",
      ylab = "Proportion mortality",
      main = "Concentration–Response Curve")
 ```
+
+---
+title: "Alina's Bioassays \n Probit - LC50 and LC90"
+author: "Norah Saarman"
+date: "`r Sys.Date()`"
+output:
+  github_document:
+    toc: true
+knit: (function(input, ...) {
+    rmarkdown::render(
+      input,
+      output_dir = "../scripts_knitted_md", 
+      envir = globalenv()
+    )
+  })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  # Saves PNGs to the root /figures folder
+  fig.path = "../figures/knitted_mds/" 
+)
+```
+
+RStudio Configuration:
+   - **R version:** R 4.4.0 (Geospatial packages)  
+   - **Number of cores:** 4 (up to 32 available)   
+   - **Account:** saarman-np  
+   - **Partition:** saarman-np (now auto allows multiple simultaneous jobs)  
+   - **Memory per job:** 16G (cluster limit: 1000G total; avoid exceeding half)
+   
+
+```{r}
+library(drc)
+library(tidyr)
+library(dplyr)
+```
+# Example
+```{r, eval=FALSE}
+# Example dataset
+data(metallo)
+
+# Fit a probit model
+model <- drm(dead/total ~ conc, weights = total, data = metallo,
+             fct = LN.2(), type = "binomial")
+summary(model)
+ED(model, c(50, 90), interval = "delta")  # LC50, LC90, and 95% CIs
+
+```
+# Green (G3), Dec 3rd, 2025: at 36 hours  
+
+```{r}
+library(drc)
+library(tidyr)
+library(dplyr)
+
+# 1. Create dataframe
+bioassay <- data.frame(
+  conc = c(0.0005, 0.005, 0.05, 0.5, 5, 50, 500),  # concentrations (ppm)
+  dead1 = c(1,2,1,14,13,15,20),
+  dead2 = c(1,1,2,11,16,16,25),
+  total = 25
+)
+
+# Convert to long format (one row per replicate)
+bioassay_long <- bioassay %>%
+  pivot_longer(cols = c(dead1, dead2),
+               names_to = "replicate",
+               values_to = "dead") %>%
+  mutate(total = total)  # total is the same for both rows
+
+bioassay_long
+
+# 2. fit the probit model
+model <- drm(dead/total ~ conc, 
+             weights = total, 
+             data = bioassay_long,
+             fct  = LN.2(),     # log-normal 2-parameter model
+             type = "binomial")
+
+summary(model)
+
+ED(model, c(50, 90), interval = "delta")
+
+
+# Calculate LC50 and LC90 with 95% confidence intervals
+lc <- ED(model, c(50, 90), interval = "delta", display = FALSE)
+
+# Extract estimates and confidence limits
+lc50 <- lc[1, "Estimate"]
+lc90 <- lc[2, "Estimate"]
+
+# Plot concentration-response curve
+plot(model, log = "x",
+     xlab = "Concentration (ppm)",
+     ylab = "Proportion mortality",
+     main = "Green (G3), Dec 3rd, 2025: at 36 hours",
+     ylim = c(0, 1))
+
+
+
+# Add horizontal reference lines
+abline(h = c(0.5, 0.9), col = c("#009E73", "#D55E00"),
+       lty = 3)
+
+# Add vertical LC50 and LC90 lines
+abline(v = lc50, col = "#009E73", lty = 2)
+abline(v = lc90, col = "#D55E00", lty = 2)
+
+# Add estimates and 95% confidence intervals to legend
+legend("topleft",
+       legend = c(
+         sprintf("LC50 = %.1f ppm (95%% CI: %.1f–%.1f)",
+                 lc50, lc[1, "Lower"], lc[1, "Upper"]),
+         sprintf("LC90 = %.1f ppm (95%% CI: %.1f–%.1f)",
+                 lc90, lc[2, "Lower"], lc[2, "Upper"])
+       ),
+       col = c("#009E73", "#D55E00"),
+       lty = 2,
+       bty = "n",
+       cex = 0.8)
+
+```
+  
+# Green (G4) Feb 10, 2026: 24 hours  
+
+## Including all, including control 0 ppm  
+```{r}
+# 1. Create dataframe, including Controls (zero deaths FYI)
+bioassay <- data.frame(
+  conc = c(0, 10,30,90,270,810),  # concentrations (ppm)
+  dead1 = c(0, 25-21, 25-23, 25-23, 25-13, 25-11),
+  dead2 = c(0, 25-22, 25-23, 25-22, 25-16, 25-4),
+  dead3 = c(0, 25-23, 25-21, 25-21, 25-17, 25-7),
+  total = 25
+)
+
+# Convert to long format (one row per replicate)
+bioassay_long <- bioassay %>%
+  pivot_longer(cols = c(dead1, dead2, dead3),
+               names_to = "replicate",
+               values_to = "dead") %>%
+  mutate(total = total)  # total is the same for both rows
+
+bioassay_long
+
+# 2. fit the probit model
+model <- drm(dead/total ~ conc, 
+             weights = total, 
+             data = bioassay_long,
+             fct = LN.2(),   # log-normal 2-parameter model
+             type = "binomial")
+
+summary(model)
+
+
+
+# Calculate LC50 and LC90 with 95% confidence intervals
+lc <- ED(model, c(50, 90), interval = "delta", display = FALSE)
+
+# Extract estimates and confidence limits
+lc50 <- lc[1, "Estimate"]
+lc90 <- lc[2, "Estimate"]
+
+# Plot concentration-response curve
+plot(model, log = "x",
+     xlab = "Concentration (ppm)",
+     ylab = "Proportion mortality",
+     main = "# Green (G4) Feb 10, 2026: 24 hours",
+     ylim = c(0, 1))
+
+
+
+# Add horizontal reference lines
+abline(h = c(0.5, 0.9), col = c("#009E73", "#D55E00"),
+       lty = 3)
+
+# Add vertical LC50 and LC90 lines
+abline(v = lc50, col = "#009E73", lty = 2)
+abline(v = lc90, col = "#D55E00", lty = 2)
+
+# Add estimates and 95% confidence intervals to legend
+legend("topleft",
+       legend = c(
+         sprintf("LC50 = %.1f ppm (95%% CI: %.1f–%.1f)",
+                 lc50, lc[1, "Lower"], lc[1, "Upper"]),
+         sprintf("LC90 = %.1f ppm (95%% CI: %.1f–%.1f)",
+                 lc90, lc[2, "Lower"], lc[2, "Upper"])
+       ),
+       col = c("#009E73", "#D55E00"),
+       lty = 2,
+       bty = "n",
+       cex = 0.8)
+```
+  
+## Excluding control (0 ppm)  
+```{r}
+# 1. Create dataframe, excluding Control (zero deaths FYI)
+bioassay <- data.frame(
+  conc = c(10,30,90,270,810),  # concentrations (ppm)
+  dead1 = c(25-21, 25-23, 25-23, 25-13, 25-11),
+  dead2 = c(25-22, 25-23, 25-22, 25-16, 25-4),
+  dead3 = c(25-23, 25-21, 25-21, 25-17, 25-7),
+  total = 25
+)
+
+# Convert to long format (one row per replicate)
+bioassay_long <- bioassay %>%
+  pivot_longer(cols = c(dead1, dead2, dead3),
+               names_to = "replicate",
+               values_to = "dead") %>%
+  mutate(total = total)  # total is the same for both rows
+
+bioassay_long
+
+# 2. fit the probit model
+model <- drm(dead/total ~ conc, 
+             weights = total, 
+             data = bioassay_long,
+             fct = LN.2(),   # log-normal 2-parameter model
+             type = "binomial")
+
+summary(model)
+
+
+
+# Calculate LC50 and LC90 with 95% confidence intervals
+lc <- ED(model, c(50, 90), interval = "delta", display = FALSE)
+
+# Extract estimates and confidence limits
+lc50 <- lc[1, "Estimate"]
+lc90 <- lc[2, "Estimate"]
+
+# Plot concentration-response curve
+plot(model, log = "x",
+     xlab = "Concentration (ppm)",
+     ylab = "Proportion mortality",
+     main = "# Green (G4) Feb 10, 2026: 24 hours (exclude control)",
+     ylim = c(0, 1))
+
+
+
+# Add horizontal reference lines
+abline(h = c(0.5, 0.9), col = c("#009E73", "#D55E00"),
+       lty = 3)
+
+# Add vertical LC50 and LC90 lines
+abline(v = lc50, col = "#009E73", lty = 2)
+abline(v = lc90, col = "#D55E00", lty = 2)
+
+# Add estimates and 95% confidence intervals to legend
+legend("topleft",
+       legend = c(
+         sprintf("LC50 = %.1f ppm (95%% CI: %.1f–%.1f)",
+                 lc50, lc[1, "Lower"], lc[1, "Upper"]),
+         sprintf("LC90 = %.1f ppm (95%% CI: %.1f–%.1f)",
+                 lc90, lc[2, "Lower"], lc[2, "Upper"])
+       ),
+       col = c("#009E73", "#D55E00"),
+       lty = 2,
+       bty = "n",
+       cex = 0.8)
+```  
+
