@@ -8,7 +8,7 @@ output:
 knit: (function(input, ...) {
     rmarkdown::render(
       input,
-      output_dir = "../scripts_knitted_md",
+      output_dir = "../scripts_knitted_md", 
       envir = globalenv()
     )
   })
@@ -18,17 +18,15 @@ knit: (function(input, ...) {
 knitr::opts_chunk$set(
   echo = TRUE,
   # Saves PNGs to the root /figures folder
-  fig.path = "../figures/knitted_mds/"
+  fig.path = "../figures/knitted_mds/" 
 )
 ```
 
 RStudio Configuration:
-
-- **R version:** R 4.4.0 (Geospatial packages)
-- **Number of cores:** 4 (up to 32 available)
-- **Account:** saarman-np
-- **Partition:** saarman-np (now auto allows multiple simultaneous jobs)
-- **Memory per job:** 16G (cluster limit: 1000G total; avoid exceeding half)
+   - **R version:** R 4.4.0 (Geospatial packages)  
+   - **Number of cores:** 1 (up to 32 available)   
+   - **Account:** saarman-np  
+   - **Partition:** saarman-np (now auto allows multiple simultaneous jobs)  
 
 ```{r libraries, message=FALSE, include = FALSE}
 library(drc)

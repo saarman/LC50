@@ -32,14 +32,10 @@ Norah Saarman
   - [Dose-response panel](#dose-response-panel)
 - [Summary table](#summary-table)
 
-RStudio Configuration:
-
-- **R version:** R 4.4.0 (Geospatial packages)
-- **Number of cores:** 4 (up to 32 available)
-- **Account:** saarman-np
+RStudio Configuration: - **R version:** R 4.4.0 (Geospatial packages)  
+- **Number of cores:** 1 (up to 32 available)  
+- **Account:** saarman-np  
 - **Partition:** saarman-np (now auto allows multiple simultaneous jobs)
-- **Memory per job:** 16G (cluster limit: 1000G total; avoid exceeding
-  half)
 
 # Overview
 
