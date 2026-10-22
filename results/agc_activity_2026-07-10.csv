@@ -1,0 +1,15 @@
+"well","medium","temp","maybe_switched","dilution","group","A405_initial","A405_final","activity_U_L","over_1"
+"B1","80% EtOH","Room temp",FALSE,1,"80% EtOH, Room temp",0.133,0.179,30.6095288794251,FALSE
+"B2","80% EtOH","Room temp",FALSE,1,"80% EtOH, Room temp",0.128,0.143,9.98136811285599,FALSE
+"C1","80% EtOH","Frozen -80 °C",FALSE,1,"80% EtOH, Frozen -80 °C",0.202,0.296,62.5499068405643,FALSE
+"C2","80% EtOH","Frozen -80 °C",FALSE,1,"80% EtOH, Frozen -80 °C",0.162,0.236,49.2414160234229,FALSE
+"D1","Tris","Room temp",FALSE,1,"Tris, Room temp",0.134,0.178,29.2786797977109,FALSE
+"D2","Tris","Room temp",FALSE,1,"Tris, Room temp",0.171,0.264,61.8844822997072,FALSE
+"E1","Tris","Frozen -80 °C",TRUE,1,"Tris, Frozen -80 °C",0.163,0.2,24.6207080117115,FALSE
+"E2","Tris","Frozen -80 °C",FALSE,1,"Tris, Frozen -80 °C",0.152,0.208,37.2637742879957,FALSE
+"F1","PBS","Room temp",FALSE,1,"PBS, Room temp",0.152,0.245,61.8844822997072,FALSE
+"F2","PBS","Room temp",FALSE,1,"PBS, Room temp",0.151,0.219,45.2488687782805,FALSE
+"G1","PBS","Frozen -80 °C",TRUE,1,"PBS, Frozen -80 °C",0.223,0.406,121.772690976843,FALSE
+"G2","PBS","Frozen -80 °C",FALSE,1,"PBS, Frozen -80 °C",0.214,0.421,137.742879957413,FALSE
+"H1","Live",NA,FALSE,1,"Live",0.184,0.287,68.5387277082779,FALSE
+"H2","Live",NA,FALSE,1,"Live",0.151,0.262,73.8621240351344,FALSE

@@ -1,5 +1,5 @@
 "assay","colony","date","hours","protocol","reps","conc_tested","control_mort","partial_doses","LC50","LC50_basis","LC90","LC90_basis","LC50_fit","LC50_lo","LC50_hi","LC90_fit","LC90_lo","LC90_hi","slope","het_p","flags"
-"Y2","Yellow","2026-09-08",24,"current",3,"0.00005 - 0.5",0,2,"0.0119 (0.0014 - 0.101)","probit","0.005 - 0.05  [probit ~0.0813]","bracket: CI very wide",0.01187,0.001398,0.1008,0.08129,0.003204,2.062,0.67,2.38e-119,""
+"Y2","Yellow","2026-09 (Sheet9)",24,"current",3,"0.00005 - 0.5",0,2,"0.0119 (0.0014 - 0.101)","probit","0.005 - 0.05  [probit ~0.0813]","bracket: CI very wide",0.01187,0.001398,0.1008,0.08129,0.003204,2.062,0.67,2.38e-119,""
 "SLCMAD1","SLCMAD","2026-05-26",24,"current",2,"0.005 - 50",0.02,4,"0.0472 (0.00744 - 0.3)","probit","0.05 - 0.5  [probit ~2.68]","bracket: CI very wide",0.04723,0.007436,0.3,2.685,0.2382,30.26,0.32,1.55e-07,""
 "G4","Green","2026-02-10",24,"current",3,"10 - 810",0,5,"429 (279 - 660)","probit","> 810  [probit ~8,250]","bracket: probit extrapolated",429.2,279.3,659.6,8249,3003,22660,0.43,0.053,""
 "O2","Orange","2026-07-06",24,"current",3,"0.005 - 500",0,1,"50 - 500  [probit ~638]","bracket: <2 partial doses, probit extrapolated","> 500  [probit ~12,800]","bracket: <2 partial doses, probit extrapolated",638.3,1.072,380100,12750,0.03702,4.391e+09,0.43,0,""

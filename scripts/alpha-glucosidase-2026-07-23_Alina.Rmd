@@ -1,0 +1,248 @@
+---
+title: "Alina's alpha-glucosidase assays \n 07/23/2026: SLCMAD vs. USU colonies"
+author: "Norah Saarman"
+date: "`r Sys.Date()`"
+output:
+  github_document:
+    toc: true
+knit: (function(input, ...) {
+    rmarkdown::render(
+      input,
+      output_dir = "../scripts_knitted_md", 
+      envir = globalenv()
+    )
+  })
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  # Saves PNGs to ../figures/knitted_mds/, prefixed with the Rmd's name
+  fig.path = paste0("../figures/knitted_mds/",
+                    sub("\\.Rmd$", "", knitr::current_input()), "-")
+)
+```
+
+RStudio Configuration:
+   - **R version:** R 4.4.0 (Geospatial packages)  
+   - **Number of cores:** 1 (up to 32 available)   
+   - **Account:** saarman-np  
+   - **Partition:** saarman-np (now auto allows multiple simultaneous jobs)  
+   
+   
+
+```{r libraries, message=FALSE, include = FALSE}
+library(readxl)
+library(knitr)
+
+# Folder holding the plate-reader export (edit if it lives elsewhere)
+data_dir    <- "../data"
+results_dir <- "../results"
+```
+
+# Overview
+
+Sigma-Aldrich alpha-Glucosidase Activity Assay Kit (MAK123), read on the
+Multiskan SkyHigh at 405 nm, kinetic reads every 6 s for 20 min at 25.5 °C.
+
+**Colony comparison.** 5 single larvae per colony:
+
+- **SLCMAD**: susceptible colony
+- **Green**: USU resistant colony (fire station 13)
+- **Orange**: USU resistant colony from the CDC
+- **White**: USU colony that Alina's notes call the "susceptible" USU colony
+
+**Activity.** From the kit:
+
+$$\text{Activity (U/L)} = \frac{A405_{final} - A405_{initial}}{A405_{calibrator} - A405_{water}} \times 250$$
+
+- *initial* = first kinetic read (t = 0); *final* = last read (t = 20 min)
+- calibrator and water = their own reads at 20 min
+- If A405_final > 1.0, the kit says to dilute with water and repeat. Set
+  `dilution` in the plate map for any re-run well and the result is
+  multiplied back up.
+
+One unit hydrolyzes 1.0 µmole substrate per minute at pH 7.0.
+
+# Plate map
+
+From Alina's plate map. A3-A5 were read but are unlabeled, so they are not
+used.
+
+```{r plate-map}
+infile    <- file.path(data_dir, "Kinetic Abs @ 405 2026-07-23 13-01-35.xlsx")
+run_label <- "2026-07-23"
+
+water_well <- "A1"   # H2O control
+cal_well   <- "A2"   # calibrator
+
+# Same order as the Lsph probit panel (most susceptible to most resistant)
+colony_order <- c("SLCMAD", "Green", "Orange", "White")
+
+plate_map <- data.frame(
+  well     = c(paste0("B", 1:5), paste0("C", 1:5), paste0("D", 1:5), paste0("E", 1:5)),
+  colony   = rep(c("SLCMAD", "Green", "White", "Orange"), each = 5),
+  dilution = 1
+)
+```
+
+# Colors
+
+Same palette as the Lsph probit figures.
+
+```{r colors}
+colony_colors <- c(SLCMAD = "#0072B2",
+                   Green  = "#009E73",
+                   Orange = "#E66100",
+                   White  = "#7B5EA7")
+```
+
+# Data
+
+The "Raw data 405 nm" sheet has one row per well per read (well, wavelength,
+absorbance, time in seconds). The header row is found by name, because the
+number of blank rows above it differs between exports.
+
+```{r read-data}
+raw <- suppressWarnings(
+  read_excel(infile, sheet = "Raw data 405 nm", col_names = FALSE,
+             col_types = c("text", "numeric", "numeric", "numeric")))
+names(raw)[1:4] <- c("well", "wavelength", "abs", "time_s")
+header_row <- which(raw$well == "Well")[1]
+raw <- as.data.frame(raw[(header_row + 1):nrow(raw), ])
+raw <- raw[!is.na(raw$well) & !is.na(raw$abs), ]
+raw$well <- gsub(" ", "", raw$well)            # "A 1" -> "A1"
+raw <- raw[order(raw$well, raw$time_s), ]
+
+table(raw$well)                                # reads per well (expect 201)
+```
+
+# Activity
+
+```{r activity}
+first_abs <- tapply(raw$abs, raw$well, function(x) x[1])
+last_abs  <- tapply(raw$abs, raw$well, function(x) x[length(x)])
+
+water_20 <- last_abs[[water_well]]
+cal_20   <- last_abs[[cal_well]]
+denom    <- cal_20 - water_20
+cat(sprintf("Calibrator (%s) at 20 min = %.4f\nWater (%s) at 20 min = %.4f\n",
+            cal_well, cal_20, water_well, water_20))
+
+agc <- plate_map
+agc$A405_initial <- as.numeric(first_abs[agc$well])
+agc$A405_final   <- as.numeric(last_abs[agc$well])
+agc$activity_U_L <- (agc$A405_final - agc$A405_initial) / denom * 250 * agc$dilution
+agc$over_1       <- agc$A405_final > 1.0
+agc$colony       <- factor(agc$colony, levels = colony_order)
+agc <- agc[order(agc$colony, agc$well), ]
+
+if (any(agc$over_1))
+  warning("A405_final > 1.0 in wells: ", paste(agc$well[agc$over_1], collapse = ", "),
+          " -- kit says dilute and repeat.")
+
+write.csv(agc, file.path(results_dir, paste0("agc_activity_", run_label, ".csv")),
+          row.names = FALSE)
+kable(agc, digits = 3, row.names = FALSE)
+```
+
+## Summary by colony
+
+```{r summary}
+agc_summary <- data.frame(
+  colony   = colony_order,
+  n        = as.numeric(tapply(agc$activity_U_L, agc$colony, length)),
+  mean_U_L = as.numeric(tapply(agc$activity_U_L, agc$colony, mean)),
+  sd_U_L   = as.numeric(tapply(agc$activity_U_L, agc$colony, sd))
+)
+agc_summary$cv_pct <- 100 * agc_summary$sd_U_L / agc_summary$mean_U_L
+
+write.csv(agc_summary, file.path(results_dir, paste0("agc_summary_", run_label, ".csv")),
+          row.names = FALSE)
+kable(agc_summary, digits = 1)
+```
+
+## Tests
+
+As in Alina's analysis: one-way ANOVA across the four colonies, and a t-test
+of SLCMAD against the three USU colonies combined (Welch, which doesn't
+assume equal variances). With 5 larvae per colony, treat the p-values as a
+rough guide.
+
+```{r tests}
+summary(aov(activity_U_L ~ colony, data = agc))
+
+t.test(agc$activity_U_L[agc$colony == "SLCMAD"],
+       agc$activity_U_L[agc$colony != "SLCMAD"])
+```
+
+# Boxplot
+
+Ordered as in the Lsph probit panel. Points are individual larvae.
+
+```{r boxplot, fig.width=6.5, fig.height=5}
+cols <- colony_colors[colony_order]
+
+par(mar = c(4.5, 4.8, 3, 1))
+boxplot(activity_U_L ~ colony, data = agc,
+        col    = adjustcolor(cols, alpha.f = 0.35),
+        border = cols,
+        lwd = 1.5, outline = FALSE, las = 1,
+        ylim = c(0, max(agc$activity_U_L) * 1.1),
+        xlab = "",
+        ylab = expression(alpha*"-glucosidase activity (U/L)"),
+        main = expression(alpha*"-glucosidase activity by colony (07/23/2026)"))
+set.seed(1)
+points(jitter(as.numeric(agc$colony), amount = 0.12), agc$activity_U_L,
+       pch = 16, cex = 1.2,
+       col = adjustcolor(colony_colors[as.character(agc$colony)], alpha.f = 0.8))
+mtext("Single larvae, n = 5 per colony", side = 3, line = 0.2, cex = 0.8, col = "grey40")
+```
+
+# QC: kinetic curves
+
+Each well's A405 over the 20 min. The formula uses only the first and last
+reads, so a well whose signal jumps around can shift its activity value.
+Water, calibrator and A3-A5 are dashed grey.
+
+```{r kinetics, fig.width=7, fig.height=5}
+par(mar = c(4.5, 4.5, 3, 1))
+plot(NA, xlim = range(raw$time_s) / 60, ylim = range(raw$abs), las = 1,
+     xlab = "Time (min)", ylab = "A405", main = "Kinetic reads, 07/23/2026")
+for (w in unique(raw$well)) {
+  d <- raw[raw$well == w, ]
+  i <- match(w, agc$well)
+  col <- if (is.na(i)) "grey60" else colony_colors[[as.character(agc$colony[i])]]
+  lines(d$time_s / 60, d$abs, col = col, lty = if (is.na(i)) 2 else 1)
+}
+legend("topleft", bty = "n", cex = 0.8,
+       legend = c(colony_order, "water / calibrator / A3-A5"),
+       col = c(colony_colors[colony_order], "grey60"), lty = c(rep(1, 4), 2))
+```
+
+```{r notes-values, include=FALSE}
+m <- setNames(round(agc_summary$mean_U_L), agc_summary$colony)
+```
+
+# Notes
+
+*Summary for Alina and the lab, written 10/22/2026.*
+
+- **SLCMAD vs. the USU colonies.** SLCMAD averaged `r m[["SLCMAD"]]` U/L,
+  about 3-5 times the three USU colonies (Green `r m[["Green"]]`, Orange
+  `r m[["Orange"]]`, White `r m[["White"]]` U/L), which were similar to one
+  another. This is the clearest susceptible-vs.-resistant difference of any
+  plate so far.
+- **White.** Alina's notes call White the "susceptible" USU colony, but in
+  the Lsph probits White was the most resistant colony tested (LC50 > 500 ppm
+  at 24 h). Its low activity here fits the probits. Worth checking which
+  label is current.
+- **SLCMAD on later plates.** SLCMAD has read high on every plate since
+  (08/14, 08/17, 10/01). On 08/14 and 08/17 the susceptible Yellow / wild
+  larvae read about as low as Green, so the gap seen here may reflect
+  SLCMAD itself rather than susceptibility in general.
+- **Storage.** The plate map doesn't say whether these larvae were live or
+  stored. Based on 07/31, storage in PBS or EtOH would lower activity, so
+  it's worth recording.
+- Small n: 5 single larvae per colony, one plate.
+

@@ -1,7 +1,7 @@
 Alina’s Bioassays Probit - LC50 and LC90
 ================
 Norah Saarman
-2026-10-21
+2026-10-22
 
 - [Overview](#overview)
 - [Helper functions](#helper-functions)
@@ -18,6 +18,8 @@ Norah Saarman
   - [Orange](#orange)
   - [Yellow](#yellow)
   - [SLCMAD](#slcmad)
+  - [Extra time points (12 h and 36
+    h)](#extra-time-points-12-h-and-36-h)
   - [Early protocol (Oct - Nov 2025)](#early-protocol-oct---nov-2025)
   - [Combine into one table](#combine-into-one-table)
 - [Single-assay examples](#single-assay-examples)
@@ -29,7 +31,7 @@ Norah Saarman
 - [Best assay per colony (24 hours)](#best-assay-per-colony-24-hours)
   - [Resistance ratios](#resistance-ratios)
   - [Dose-response curves](#dose-response-curves)
-  - [Dose-response panel](#dose-response-panel)
+  - [Dose-response panel.](#dose-response-panel)
 - [Summary table](#summary-table)
 
 RStudio Configuration: - **R version:** R 4.4.0 (Geospatial packages)  
@@ -468,13 +470,13 @@ enter_assay("Y1", "Yellow", "2026-09-07", hours = 24,
   rep3 = c(25,    2,   0, 0,  0,   0),
   note = "Green conc series by mistake")
  
-# Y2: September 8, 2026
-enter_assay("Y2", "Yellow", "2026-09-08", hours = 24,
+# Y2: sheet named 'Sheet9'; dates copied from the Y1 template, so true date uncertain
+enter_assay("Y2", "Yellow", "2026-09 (Sheet9)", hours = 24,
   conc = c( 0, 0.00005, 0.0005, 0.005, 0.05, 0.5),
   rep1 = c(26,      24,     25,    23,    0,   0),
   rep2 = c(25,      25,     24,    21,    4,   0),
   rep3 = c(25,      24,     25,    22,    2,   0))
-enter_assay("Y2", "Yellow", "2026-09-08", hours = 48,
+enter_assay("Y2", "Yellow", "2026-09 (Sheet9)", hours = 48,
   conc = c( 0, 0.00005, 0.0005, 0.005, 0.05, 0.5),
   rep1 = c(26,      24,     25,    21,    0,   0),
   rep2 = c(25,      25,     24,    21,    2,   0),
@@ -492,6 +494,52 @@ enter_assay("SLCMAD1", "SLCMAD", "2026-05-26", hours = 48,
   conc = c( 0, 0.005, 0.05, 0.5, 5, 50),
   rep1 = c(26,    25,    8,   2, 1,  1),
   rep2 = c(23,    18,    3,   0, 3,  3))
+```
+
+## Extra time points (12 h and 36 h)
+
+Counts at 12 h and 36 h for the best assays, used only for the
+time-course plots (the sheets label some of these “unofficial”). W7 was
+not counted at 36 h, and SLCMAD1 was only counted at 24 h and 48 h.
+
+``` r
+enter_assay("G4", "Green", "2026-02-10", hours = 12,
+  conc = c( 0, 10, 30, 90, 270, 810),
+  rep1 = c(25, 21, 23, 23,  19,  20),
+  rep2 = c(25, 22, 23, 23,  23,  16),
+  rep3 = c(25, 23, 23, 22,  22,  18))
+enter_assay("G4", "Green", "2026-02-10", hours = 36,
+  conc = c( 0, 10, 30, 90, 270, 810),
+  rep1 = c(25, 21, 23, 22,   2,   3),
+  rep2 = c(25, 22, 23, 21,   6,   0),
+  rep3 = c(25, 23, 21, 21,   2,   1))
+ 
+enter_assay("W7", "White", "2026-06-08", hours = 12,
+  conc = c( 0, 0.05, 0.5,  5, 50, 500),
+  rep1 = c(25,   25,  23, 20, 24,  20),
+  rep2 = c(25,   25,  22, 21, 23,  23))
+ 
+enter_assay("O2", "Orange", "2026-07-06", hours = 12,
+  conc = c( 0, 0.005, 0.05, 0.5,  5, 50, 500),
+  rep1 = c(25,    25,   25,  25, 25, 25,  24),
+  rep2 = c(25,    25,   25,  25, 25, 25,  25),
+  rep3 = c(25,    25,   25,  25, 25, 25,  24))
+enter_assay("O2", "Orange", "2026-07-06", hours = 36,
+  conc = c( 0, 0.005, 0.05, 0.5,  5, 50, 500),
+  rep1 = c(25,    25,   25,  25, 25, 24,   1),
+  rep2 = c(25,    25,   25,  25, 25, 24,   1),
+  rep3 = c(25,    25,   24,  23, 25, 25,   1))
+ 
+enter_assay("Y2", "Yellow", "2026-09 (Sheet9)", hours = 12,
+  conc = c( 0, 0.00005, 0.0005, 0.005, 0.05, 0.5),
+  rep1 = c(26,      24,     25,    24,    0,   0),
+  rep2 = c(25,      25,     24,    22,    4,   0),
+  rep3 = c(25,      25,     25,    22,    2,   0))
+enter_assay("Y2", "Yellow", "2026-09 (Sheet9)", hours = 36,
+  conc = c( 0, 0.00005, 0.0005, 0.005, 0.05, 0.5),
+  rep1 = c(26,      24,     25,    22,    0,   0),
+  rep2 = c(25,      25,     24,    21,    3,   0),
+  rep3 = c(25,      24,     25,    22,    2,   0))
 ```
 
 ## Early protocol (Oct - Nov 2025)
@@ -620,7 +668,7 @@ fit_g3$lc
 
     ##   level   estimate      lower       upper
     ## 1  LC50   1.884321  0.9824244    3.614186
-    ## 2  LC90 315.670869 89.0159847 1119.440493
+    ## 2  LC90 315.670870 89.0159849 1119.440492
 
 ``` r
 plot_probit(fit_g3, "Green (G3), Dec 3rd, 2025: at 36 hours", col = colony_colors[["Green"]])
@@ -644,7 +692,7 @@ summary(fit_g4$model)
     ## 
     ##                 Estimate Std. Error t-value   p-value    
     ## b:(Intercept)   0.433566   0.051421  8.4317 < 2.2e-16 ***
-    ## e:(Intercept) 429.217711  94.106699  4.5610 5.092e-06 ***
+    ## e:(Intercept) 429.217711  94.106679  4.5610 5.092e-06 ***
     ## ---
     ## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
 
@@ -652,9 +700,9 @@ summary(fit_g4$model)
 fit_g4$lc
 ```
 
-    ##   level  estimate     lower     upper
-    ## 1  LC50  429.2177  279.2867   659.637
-    ## 2  LC90 8248.6300 3002.6493 22659.955
+    ##   level  estimate     lower      upper
+    ## 1  LC50  429.2177  279.2867   659.6369
+    ## 2  LC90 8248.6300 3002.6498 22659.9510
 
 ``` r
 plot_probit(fit_g4, "Green (G4) Feb 10, 2026: 24 hours", col = colony_colors[["Green"]])
@@ -696,8 +744,13 @@ kable(g4_sensitivity, digits = 1)
 
 # All assays
 
+Probits for every assay at the two official time points, 24 h and 48 h.
+(The 12 h and 36 h counts are only used for the time-course plots; G3 at
+36 h is shown in its own example above.)
+
 ``` r
 results <- bioassay %>%
+  filter(hours %in% c(24, 48)) %>%
   group_by(assay, colony, date, hours, protocol) %>%
   group_modify(~ summarise_assay(.x), .keep = TRUE) %>%
   ungroup() %>%
@@ -734,7 +787,6 @@ results %>%
 | Green  | G2      |    24 |         0.09 |             4 | \> 0.01 \[probit ~0.054\]       | \> 0.01 \[probit ~0.556\]       | early protocol (not comparable)                           |
 | Green  | G2      |    48 |         0.17 |             4 | \> 0.01 \[probit ~0.0177\]      | \> 0.01 \[probit ~0.033\]       | early protocol (not comparable)                           |
 | Green  | G3      |    24 |         0.02 |             3 | 8.04 (1.34 - 48.4)              | \> 500 \[probit ~8,940\]        |                                                           |
-| Green  | G3      |    36 |         0.00 |             5 | 1.88 (0.982 - 3.61)             | 316 (89 - 1,120)                |                                                           |
 | Green  | G3      |    48 |         0.02 |             3 | 2 (1.04 - 3.83)                 | 179 (53.7 - 597)                |                                                           |
 | Green  | G4      |    24 |         0.00 |             5 | 429 (279 - 660)                 | \> 810 \[probit ~8,250\]        |                                                           |
 | Green  | G4      |    48 |         0.01 |             3 | 145 (125 - 168)                 | 231 (195 - 273)                 |                                                           |
@@ -762,9 +814,9 @@ results %>%
 | White  | W6      |    48 |         0.00 |             0 | \> 5                            | \> 5                            |                                                           |
 | White  | W7      |    24 |         0.00 |             4 | \> 500 \[probit ~2,830\]        | \> 500 \[probit ~2.65e+06\]     |                                                           |
 | White  | W7      |    48 |         0.10 |             2 | 173 (78.2 - 385)                | 429 (234 - 786)                 |                                                           |
-| Yellow | Y1      |    24 |         0.00 |             1 | \< 0.05                         | \< 0.05                         |                                                           |
 | Yellow | Y2      |    24 |         0.00 |             2 | 0.0119 (0.0014 - 0.101)         | 0.005 - 0.05 \[probit ~0.0813\] |                                                           |
 | Yellow | Y2      |    48 |         0.00 |             1 | 0.005 - 0.05 \[probit ~0.0106\] | 0.005 - 0.05 \[probit ~0.0527\] |                                                           |
+| Yellow | Y1      |    24 |         0.00 |             1 | \< 0.05                         | \< 0.05                         |                                                           |
 
 # Best assay per colony (24 hours)
 
@@ -887,19 +939,79 @@ for (colony_name in names(best_assay)) {
 
 ![](../figures/knitted_mds/best-plots-1.png)<!-- -->![](../figures/knitted_mds/best-plots-2.png)<!-- -->![](../figures/knitted_mds/best-plots-3.png)<!-- -->![](../figures/knitted_mds/best-plots-4.png)<!-- -->![](../figures/knitted_mds/best-plots-5.png)<!-- -->
 
-## Dose-response panel
+## Dose-response panel.
 
-All five colonies side by side at 24 h, on the same concentration axis
-so the shift between susceptible and resistant colonies is visible.
-Points are individual cups; the line is the probit fit. Dashed LC lines
-are drawn only where the LC was estimated from the probit (not where it
-is bracketed or extrapolated beyond the tested doses).
+Top row: raw mortality over time for each best assay, one line per
+concentration (the mean across cups). Every line is in the colony’s
+color; concentrations are told apart by line type, width and
+transparency, with the lowest doses thin and faint and the highest thick
+and solid. The control is a grey dotted line. The vertical grey band
+marks 24 h, the time point used in the bottom row.
+
+Bottom row: all five colonies at 24 h, on the same concentration axis so
+the shift between susceptible and resistant colonies is visible. Points
+are individual cups; the line is the probit fit. Dashed LC lines are
+drawn only where the LC was estimated from the probit (not where it is
+bracketed or extrapolated beyond the tested doses).
 
 ``` r
-panel_xlim  <- c(1e-5, 2000)                 # same x-axis for every panel
+panel_xlim  <- c(1e-5, 2000)                 # same x-axis for every probit panel
 panel_ticks <- 10^seq(-4, 2, by = 2)
  
-draw_panel <- function(colony_name) {
+# ---- Top row: mortality over time, one line per concentration ----
+draw_timecourse <- function(colony_name, first_column = FALSE) {
+  id  <- best_assay[[colony_name]]
+  col <- colony_colors[[colony_name]]
+ 
+  surv <- bioassay %>%
+    filter(assay == id) %>%
+    group_by(conc, hours) %>%
+    summarise(prop_dead = sum(dead) / sum(total), .groups = "drop") %>%
+    arrange(conc, hours)
+ 
+  doses <- sort(unique(surv$conc[surv$conc > 0]))
+  n     <- length(doses)
+ 
+  # Line style per dose: higher dose = thicker, more opaque, more solid
+  # (patterns run from fine dots for the lowest dose to solid for the highest;
+  #  the control has its own grey dotted line)
+  lty_by_rank <- c("12", "3313", "44", "73", "F2", "solid")
+  dose_lty    <- tail(lty_by_rank, n)
+  dose_lwd    <- seq(1, 3.5, length.out = n)
+  dose_alpha  <- seq(0.35, 1, length.out = n)
+ 
+  plot(NA, xlim = c(10, 76), ylim = c(0, 1), xaxt = "n",
+       xlab = "", ylab = "",
+       main = paste0(colony_name, " (", id, ")"))
+  axis(1, at = c(12, 24, 36, 48))
+  title(xlab = "Hours of exposure", line = 2)
+  if (first_column) title(ylab = "Proportion dead", line = 2)
+  rect(22.5, -1, 25.5, 2, col = "grey92", border = NA)   # 24 h band
+ 
+  # Control
+  ctrl <- filter(surv, conc == 0)
+  lines(ctrl$hours, ctrl$prop_dead, col = "grey40", lty = "13", lwd = 1.5)
+  points(ctrl$hours, ctrl$prop_dead, col = "grey40", pch = 16, cex = 0.7)
+ 
+  # Each concentration
+  for (i in seq_len(n)) {
+    s_i  <- filter(surv, conc == doses[i])
+    clr  <- adjustcolor(col, alpha.f = dose_alpha[i])
+    lines(s_i$hours, s_i$prop_dead, col = clr, lty = dose_lty[i], lwd = dose_lwd[i])
+    points(s_i$hours, s_i$prop_dead, col = clr, pch = 16, cex = 0.7)
+  }
+ 
+  # Legend in the empty space to the right of 48 h
+  legend("right", bty = "n", cex = 0.7, title = "ppm", seg.len = 2.5,
+         legend = c("control", sapply(doses, fmt)),
+         col    = c("grey40", sapply(dose_alpha, function(a) adjustcolor(col, alpha.f = a))),
+         lty    = c("13", dose_lty),      # "13" = dotted, as text so it can mix with the dose patterns
+         lwd    = c(1.5, dose_lwd))
+  box()
+}
+ 
+# ---- Bottom row: 24 h probit ----
+draw_panel <- function(colony_name, first_column = FALSE) {
   id      <- best_assay[[colony_name]]
   d       <- filter(bioassay, assay == id, hours == best_hours)
   fit     <- fit_probit(d)
@@ -912,8 +1024,10 @@ draw_panel <- function(colony_name) {
        log = "x", xlim = panel_xlim, ylim = c(0, 1), xaxt = "n",
        pch = 16, col = adjustcolor(col, alpha.f = 0.7),
        xlab = "", ylab = "",
-       main = paste0(colony_name, " (", id, ")"))
+       main = paste0(colony_name, " (", id, "), ", best_hours, " h"))
   axis(1, at = panel_ticks, labels = sapply(panel_ticks, fmt))
+  title(xlab = "Lsph concentration (ppm)", line = 2)
+  if (first_column) title(ylab = "Proportion dead", line = 2)
   abline(h = c(0.5, 0.9), lty = 3, col = lc_colors)
  
   # Probit curve, plus LC lines only where the LC came from the probit
@@ -932,10 +1046,10 @@ draw_panel <- function(colony_name) {
                     paste("LC90:", clean_lc(row$LC90))))
 }
  
-old_par <- par(mfrow = c(1, 5), mar = c(3, 3, 2.5, 0.5), oma = c(3, 3, 0, 0))
-for (colony_name in names(best_assay)) draw_panel(colony_name)
-mtext("Lsph concentration (ppm)",          side = 1, outer = TRUE, line = 1)
-mtext("Proportion mortality (24 h)",       side = 2, outer = TRUE, line = 1)
+old_par <- par(mfrow = c(2, 5), mar = c(3.5, 3.5, 2.5, 0.5))
+colonies <- names(best_assay)
+for (i in seq_along(colonies)) draw_timecourse(colonies[i], first_column = i == 1)
+for (i in seq_along(colonies)) draw_panel(colonies[i],      first_column = i == 1)
 ```
 
 ![](../figures/knitted_mds/best-panel-1.png)<!-- -->
@@ -974,10 +1088,10 @@ write.csv(summary_table, file.path(results_dir, "lsph_summary_table_24h.csv"), r
 kable(summary_table, align = "llcllll")
 ```
 
-| Colony | Assay                | Cups per dose | LC50 (ppm, 95% CI)      | LC90 (ppm)   | RR50 vs Yellow | RR50 vs SLCMAD |
-|:-------|:---------------------|:-------------:|:------------------------|:-------------|:---------------|:---------------|
-| Yellow | Y2 (2026-09-08)      |       3       | 0.0119 (0.0014 - 0.101) | 0.005 - 0.05 | 1              | 0.251          |
-| SLCMAD | SLCMAD1 (2026-05-26) |       2       | 0.0472 (0.00744 - 0.3)  | 0.05 - 0.5   | 3.98           | 1              |
-| Green  | G4 (2026-02-10)      |       3       | 429 (279 - 660)         | \> 810       | 36,200         | 9,090          |
-| Orange | O2 (2026-07-06)      |       3       | 50 - 500                | \> 500       | 4,210 - 42,100 | 1,060 - 10,600 |
-| White  | W7 (2026-06-08)      |       2       | \> 500                  | \> 500       | \> 42,100      | \> 10,600      |
+| Colony | Assay                 | Cups per dose | LC50 (ppm, 95% CI)      | LC90 (ppm)   | RR50 vs Yellow | RR50 vs SLCMAD |
+|:-------|:----------------------|:-------------:|:------------------------|:-------------|:---------------|:---------------|
+| Yellow | Y2 (2026-09 (Sheet9)) |       3       | 0.0119 (0.0014 - 0.101) | 0.005 - 0.05 | 1              | 0.251          |
+| SLCMAD | SLCMAD1 (2026-05-26)  |       2       | 0.0472 (0.00744 - 0.3)  | 0.05 - 0.5   | 3.98           | 1              |
+| Green  | G4 (2026-02-10)       |       3       | 429 (279 - 660)         | \> 810       | 36,200         | 9,090          |
+| Orange | O2 (2026-07-06)       |       3       | 50 - 500                | \> 500       | 4,210 - 42,100 | 1,060 - 10,600 |
+| White  | W7 (2026-06-08)       |       2       | \> 500                  | \> 500       | \> 42,100      | \> 10,600      |

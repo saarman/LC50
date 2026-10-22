@@ -1,7 +1,7 @@
 Alina’s alpha-glucosidase assays 09/11/2026: pooling test (1x-5x larvae)
 ================
 Norah Saarman
-2026-10-21
+2026-10-22
 
 - [Overview](#overview)
 - [Plate map](#plate-map)
@@ -71,8 +71,8 @@ simply reused in order for 1x-5x.
 ``` r
 pal <- c("#E6AB02", "#0072B2", "#009E73", "#E66100", "#7B5EA7")
 names(pal) <- group_order
-# To draw every box in one colony's color instead, e.g. SLCMAD:
-# pal[] <- "#0072B2"
+#To draw every box in one colony's color instead, e.g. SLCMAD:
+pal[] <- "#0072B2"
 ```
 
 # Data
@@ -192,7 +192,7 @@ mtext("n = 3 wells per group; PBS scaled 50 µL per larva",
       side = 3, line = 0.2, cex = 0.8, col = "grey40")
 ```
 
-![](../figures/knitted_mds/boxplot-1.png)<!-- -->
+![](../figures/knitted_mds/alpha-glucosidase-2026-09-11_Alina-boxplot-1.png)<!-- -->
 
 # QC: kinetic curves
 
@@ -216,4 +216,4 @@ legend("topleft", bty = "n", cex = 0.8,
        col = c(pal[group_order], "grey40"), lty = c(rep(1, 5), 2))
 ```
 
-![](../figures/knitted_mds/kinetics-1.png)<!-- -->
+![](../figures/knitted_mds/alpha-glucosidase-2026-09-11_Alina-kinetics-1.png)<!-- -->

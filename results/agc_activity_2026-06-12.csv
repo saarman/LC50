@@ -1,0 +1,10 @@
+"well","sample","part","dilution","A405_initial","A405_final","activity_U_L","over_1"
+"C1","S1","Larval abdomen",1,0.116,0.153,24.5814509699708,FALSE
+"C2","S2","Larval abdomen",1,0.152,0.194,27.9032686686155,FALSE
+"C3","S3","Larval abdomen",1,0.125,0.171,30.5607228275312,FALSE
+"D1","S4","Larval thorax",1,0.211,0.312,67.1007175126229,FALSE
+"D2","S5","Larval thorax",1,0.177,0.243,43.84799362211,FALSE
+"D3","S6","Larval thorax",1,0.186,0.295,72.4156258304544,FALSE
+"E1","S7","Adult",1,0.126,0.177,33.8825405261759,FALSE
+"E2","S8","Adult",1,0.187,0.277,59.7927185756046,FALSE
+"E3","S9","Adult",1,0.2,0.256,37.2043582248206,FALSE

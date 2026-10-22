@@ -17,8 +17,9 @@ knit: (function(input, ...) {
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
   echo = TRUE,
-  # Saves PNGs to the root /figures folder
-  fig.path = "../figures/knitted_mds/" 
+  # Saves PNGs to ../figures/knitted_mds/, prefixed with the Rmd's name
+  fig.path = paste0("../figures/knitted_mds/",
+                    sub("\\.Rmd$", "", knitr::current_input()), "-")
 )
 ```
 
@@ -89,8 +90,8 @@ order for 1x-5x.
 ```{r colors}
 pal <- c("#E6AB02", "#0072B2", "#009E73", "#E66100", "#7B5EA7")
 names(pal) <- group_order
-# To draw every box in one colony's color instead, e.g. SLCMAD:
-# pal[] <- "#0072B2"
+#To draw every box in one colony's color instead, e.g. SLCMAD:
+pal[] <- "#0072B2"
 ```
 
 # Data

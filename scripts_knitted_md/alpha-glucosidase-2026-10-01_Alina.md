@@ -1,7 +1,7 @@
 Alina’s alpha-glucosidase assays 09/11/2026: pooling test (1x-5x larvae)
 ================
 Norah Saarman
-2026-10-21
+2026-10-22
 
 - [Overview](#overview)
 - [Plate map](#plate-map)
@@ -267,7 +267,7 @@ points(jitter(as.numeric(single$group), amount = 0.12), single$activity_U_L,
 mtext("Single larvae, n = 5 per group", side = 3, line = 0.2, cex = 0.8, col = "grey40")
 ```
 
-![](../figures/knitted_mds/boxplot-single-1.png)<!-- -->
+![](../figures/knitted_mds/alpha-glucosidase-2026-10-01_Alina-boxplot-single-1.png)<!-- -->
 
 # Single larvae vs. 5-larva pools
 
@@ -302,7 +302,7 @@ legend("topright", bty = "n", cex = 0.85, pch = c(16, 17),
        legend = c("Single larva (n = 5)", "Pool of 5 (n = 3)"))
 ```
 
-![](../figures/knitted_mds/boxplot-pools-1.png)<!-- -->
+![](../figures/knitted_mds/alpha-glucosidase-2026-10-01_Alina-boxplot-pools-1.png)<!-- -->
 
 # QC: kinetic curves
 
@@ -334,7 +334,7 @@ legend("topleft", bty = "n", cex = 0.8,
        lty = c(rep(1, 4), 2, 3))
 ```
 
-![](../figures/knitted_mds/kinetics-1.png)<!-- -->
+![](../figures/knitted_mds/alpha-glucosidase-2026-10-01_Alina-kinetics-1.png)<!-- -->
 
 # QC: reaction rates and starting absorbance
 
