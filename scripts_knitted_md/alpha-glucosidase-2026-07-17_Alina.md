@@ -2,7 +2,7 @@ Alina’s alpha-glucosidase assays 07/17/2026: storage methods and
 EtOH-stored colony and wild larvae
 ================
 Norah Saarman
-2026-10-22
+2026-10-23
 
 - [Overview](#overview)
 - [Plate map](#plate-map)
@@ -106,10 +106,12 @@ colonies, so they are drawn in greys (dark for Wild R, light for Wild
 S).
 
 ``` r
-colony_colors <- c(SLCMAD   = "#0072B2",
-                   Green    = "#009E73",
-                   Orange   = "#E66100",
-                   "Wild R" = "grey30",
+colony_colors <- c(Yellow   = "#B8860B",   # mustard gold (was #E6AB02)
+                   SLCMAD   = "#005A9C",   # deeper blue  (was #0072B2)
+                   Green    = "#007A55",   # deeper green (was #009E73)
+                   Orange   = "#D04A00",   # burnt orange (was #E66100)
+                   White    = "#5E3C99",   # deeper purple (was #7B5EA7)
+                   "Wild R" = "grey20",
                    "Wild S" = "grey60")
 ```
 

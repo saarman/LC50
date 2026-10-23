@@ -92,16 +92,21 @@ plate_map$group <- ifelse(plate_map$larvae == 1, plate_map$colony,
 
 # Colors
 
-Presentation palette, matching the master summary and the Lsph probit
-figures (higher contrast; Yellow is a mustard gold). The wild resistant
-samples aren’t one of the colonies, so they are drawn in near-black
-grey.
+Presentation palette and plot labels, matching 08/17, the master summary
+and the Lsph probit figures (higher contrast; Yellow is a mustard gold).
+The wild resistant samples aren’t one of the colonies, so they are drawn
+in near-black grey. Labels give each colony’s RR50 vs. SLCMAD at 24 h.
 
 ``` r
 colony_colors <- c(Yellow            = "#B8860B",
                    SLCMAD            = "#005A9C",
                    Green             = "#007A55",
                    "Wild R (stored)" = "grey20")
+ 
+colony_labels <- c(Yellow            = "Yellow\nColony\n(RR50=0.251)",
+                   SLCMAD            = "SLCMAD\nColony\n(RR50=1)",
+                   Green             = "Green\nColony\n(RR50=9,090)",
+                   "Wild R (stored)" = "Wild SLC\n(stored)")
 ```
 
 # Data
@@ -253,11 +258,11 @@ single <- droplevels(agc[agc$larvae == 1, ])
 single$group <- factor(single$group, levels = colony_order)
 cols <- colony_colors[colony_order]
  
-par(mar = c(4.5, 4.8, 3, 1))
+par(mar = c(5.5, 4.8, 3, 1))
 boxplot(activity_U_L ~ group, data = single,
         col    = adjustcolor(cols, alpha.f = 0.35),
         border = cols,
-        lwd = 1.5, outline = FALSE, las = 1,
+        lwd = 1.5, outline = FALSE, las = 1, xaxt = "n",
         ylim = c(0, max(agc$activity_U_L) * 1.1),
         xlab = "",
         ylab = expression(alpha*"-glucosidase activity (U/L)"),
@@ -266,6 +271,10 @@ set.seed(1)
 points(jitter(as.numeric(single$group), amount = 0.12), single$activity_U_L,
        pch = 16, cex = 1.2,
        col = adjustcolor(colony_colors[single$colony], alpha.f = 0.8))
+axis(1, at = seq_along(colony_order), labels = FALSE)
+# mtext() draws every multi-line label (axis() can drop ones that come close)
+mtext(colony_labels[colony_order], side = 1, at = seq_along(colony_order),
+      line = 0.8, padj = 1, cex = 0.8)
 mtext("Single larvae, n = 5 per group", side = 3, line = 0.2, cex = 0.8, col = "grey40")
 ```
 
@@ -287,7 +296,7 @@ fill <- adjustcolor(pcol, alpha.f = 1)
 fill[c(TRUE, FALSE)] <- adjustcolor(pcol[c(TRUE, FALSE)], alpha.f = 0.25)
 fill[c(FALSE, TRUE)] <- adjustcolor(pcol[c(FALSE, TRUE)], alpha.f = 0.7)
  
-par(mar = c(4.5, 4.8, 3, 1))
+par(mar = c(5.5, 4.8, 3, 1))
 boxplot(activity_U_L ~ box, data = paired, at = at, boxwex = 0.32,
         col = fill, border = pcol, lwd = 1.5, outline = FALSE, las = 1,
         xaxt = "n", xlim = c(0.5, length(pool_colonies) + 0.5),
@@ -295,7 +304,8 @@ boxplot(activity_U_L ~ box, data = paired, at = at, boxwex = 0.32,
         xlab = "",
         ylab = expression(alpha*"-glucosidase activity (U/L)"),
         main = expression(alpha*"-glucosidase activity: single vs. pooled (10/01/2026)"))
-axis(1, at = seq_along(pool_colonies), labels = pool_colonies, tick = FALSE)
+mtext(colony_labels[pool_colonies], side = 1, at = seq_along(pool_colonies),
+      line = 0.8, padj = 1, cex = 0.8)
 set.seed(1)
 points(jitter(at[as.numeric(paired$box)], amount = 0.06), paired$activity_U_L,
        pch = ifelse(paired$larvae == 1, 16, 17), cex = 1.1,
@@ -331,7 +341,7 @@ for (w in unique(raw$well)) {
   }
 }
 legend("topleft", bty = "n", cex = 0.8,
-       legend = c(colony_order, "blanks / calibrators", "empty wells"),
+       legend = c(gsub("\n", " ", colony_labels[colony_order]), "blanks / calibrators", "empty wells"),
        col = c(colony_colors[colony_order], "grey40", "grey80"),
        lty = c(rep(1, 4), 2, 3))
 ```

@@ -14,8 +14,7 @@ Norah Saarman
 - [QC: reader stability](#qc-reader-stability)
 - [Notes](#notes)
 
-RStudio Configuration:  
-- **R version:** R 4.4.0 (Geospatial packages)  
+RStudio Configuration: - **R version:** R 4.4.0 (Geospatial packages)  
 - **Number of cores:** 1 (up to 32 available)  
 - **Account:** saarman-np  
 - **Partition:** saarman-np (now auto allows multiple simultaneous jobs)
@@ -55,13 +54,13 @@ From Alina’s plate map. All other wells were empty.
 file_initial <- file.path(data_dir, "8-17-26 assay run 1.xls")   # t = 0
 file_final   <- file.path(data_dir, "8-17-26 assay run 2.xls")   # t = 20 min
 run_label    <- "2026-08-17"
-
+ 
 water_well <- "A1"   # H2O control
 cal_well   <- "A2"   # calibrator
-
+ 
 # Ordered from most susceptible to most resistant, wild resistant last
 colony_order <- c("Yellow", "SLCMAD", "Green", "Wild R")
-
+ 
 plate_map <- data.frame(
   well     = c(paste0("B", 1:5), paste0("C", 1:5), paste0("D", 1:5), paste0("E", 1:5)),
   colony   = rep(c("Wild R", "Yellow", "Green", "SLCMAD"), each = 5),
@@ -71,22 +70,20 @@ plate_map <- data.frame(
 
 # Colors
 
-Presentation palette and plot labels, matching the master summary and
-the Lsph probit figures (higher contrast; Yellow is a mustard gold). The
-wild resistant samples aren’t one of the colonies, so they are drawn in
-near-black grey. Labels give each colony’s RR50 vs. SLCMAD at 24 h.
+Presentation palette and plot labels, matching 10/01, the master summary
+and the Lsph probit figures (higher contrast; Yellow is a mustard gold).
+The wild resistant samples aren’t one of the colonies, so they are drawn
+in near-black grey. Labels give each colony’s RR50 vs. SLCMAD at 24 h.
 
 ``` r
 colony_colors <- c(Yellow   = "#B8860B",
                    SLCMAD   = "#005A9C",
                    Green    = "#007A55",
                    "Wild R" = "grey20")
-
+ 
 colony_labels <- c(Yellow   = "Yellow\nColony\n(RR50=0.251)",
                    SLCMAD   = "SLCMAD\nColony\n(RR50=1)",
                    Green    = "Green\nColony\n(RR50=9,090)",
-                   Orange   = "Orange\nColony\n(RR50>1,060)",
-                   White    = "White\nColony\n(RR50>10,600)",
                    "Wild R" = "Wild SLC\n(survivors)")
 ```
 
@@ -106,11 +103,11 @@ read_plate <- function(file) {
   data.frame(well = paste0(rep(block[[1]], 12), rep(1:12, each = 8)),
              abs  = as.vector(absorbance))
 }
-
+ 
 initial <- read_plate(file_initial)
 final   <- read_plate(file_final)
 stopifnot(identical(initial$well, final$well))
-
+ 
 plates <- data.frame(well = initial$well,
                      A405_initial = initial$abs, A405_final = final$abs)
 ```
@@ -134,11 +131,11 @@ agc$activity_U_L <- (agc$A405_final - agc$A405_initial) / denom * 250 * agc$dilu
 agc$over_1       <- agc$A405_final > 1.0
 agc$colony       <- factor(agc$colony, levels = colony_order)
 agc <- agc[order(agc$colony, agc$well), ]
-
+ 
 if (any(agc$over_1))
   warning("A405_final > 1.0 in wells: ", paste(agc$well[agc$over_1], collapse = ", "),
           " -- kit says dilute and repeat.")
-
+ 
 write.csv(agc, file.path(results_dir, paste0("agc_activity_", run_label, ".csv")),
           row.names = FALSE)
 kable(agc, digits = 3, row.names = FALSE)
@@ -177,7 +174,7 @@ agc_summary <- data.frame(
   sd_U_L   = as.numeric(tapply(agc$activity_U_L, agc$colony, sd))
 )
 agc_summary$cv_pct <- 100 * agc_summary$sd_U_L / agc_summary$mean_U_L
-
+ 
 write.csv(agc_summary, file.path(results_dir, paste0("agc_summary_", run_label, ".csv")),
           row.names = FALSE)
 kable(agc_summary, digits = 1)
@@ -198,7 +195,7 @@ larvae.
 
 ``` r
 cols <- colony_colors[colony_order]
-
+ 
 par(mar = c(5.5, 4.8, 3, 1))
 boxplot(activity_U_L ~ colony, data = agc,
         col    = adjustcolor(cols, alpha.f = 0.35),

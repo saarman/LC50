@@ -247,11 +247,11 @@ if (requireNamespace("multcomp", quietly = TRUE)) {
     ## Linear Hypotheses:
     ##                                     Estimate Std. Error t value Pr(>|t|)  
     ## 80% EtOH, Room temp - Live == 0       -50.90      13.05  -3.900   0.0243 *
-    ## 80% EtOH, Frozen -80 °C - Live == 0   -15.30      13.05  -1.172   0.7150  
-    ## Tris, Room temp - Live == 0           -25.62      13.05  -1.963   0.3022  
-    ## Tris, Frozen -80 °C - Live == 0       -40.26      13.05  -3.084   0.0688 .
+    ## 80% EtOH, Frozen -80 °C - Live == 0   -15.30      13.05  -1.172   0.7151  
+    ## Tris, Room temp - Live == 0           -25.62      13.05  -1.963   0.3026  
+    ## Tris, Frozen -80 °C - Live == 0       -40.26      13.05  -3.084   0.0694 .
     ## PBS, Room temp - Live == 0            -17.63      13.05  -1.351   0.6076  
-    ## PBS, Frozen -80 °C - Live == 0         58.56      13.05   4.486   0.0118 *
+    ## PBS, Frozen -80 °C - Live == 0         58.56      13.05   4.486   0.0121 *
     ## ---
     ## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
     ## (Adjusted p values reported -- single-step method)

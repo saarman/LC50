@@ -15,10 +15,25 @@ knit: (function(input, ...) {
 ---
 
 ```{r setup, include=FALSE}
+library(knitr)
+
+# Set to TRUE only when you want to (re)write the PDFs in ../figures/pdfs/
+save_pdfs <- FALSE
+
+# Figure filenames start with the Rmd's name, e.g. alpha-glucosidase-2026-08-17_Alina-boxplot-1
+fig_prefix <- sub("\\.Rmd$", "", knitr::current_input())
+
+# PDF device that writes straight into ../figures/pdfs/ (gitignored), same filename as the PNG
+pdf_to_folder <- function(file, width, height, ...) {
+  grDevices::pdf(file.path("../figures/pdfs", basename(file)),
+                 width = width, height = height, ...)
+}
+
 knitr::opts_chunk$set(
   echo = TRUE,
-  # Saves PNGs to the root /figures folder
-  fig.path = "../figures/knitted_mds/" 
+  fig.path = paste0("../figures/knitted_mds/", fig_prefix, "-"),
+  dev     = if (save_pdfs) c("png", "pdf_to_folder") else "png",
+  fig.ext = if (save_pdfs) c("png", "pdf")           else "png"
 )
 ```
 

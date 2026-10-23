@@ -15,10 +15,25 @@ knit: (function(input, ...) {
 ---
 
 ```{r setup, include=FALSE}
+library(knitr)
+
+# Set to TRUE only when you want to (re)write the PDFs in ../figures/pdfs/
+save_pdfs <- FALSE
+
+# Figure filenames start with the Rmd's name, e.g. alpha-glucosidase-2026-08-17_Alina-boxplot-1
+fig_prefix <- sub("\\.Rmd$", "", knitr::current_input())
+
+# PDF device that writes straight into ../figures/pdfs/ (gitignored), same filename as the PNG
+pdf_to_folder <- function(file, width, height, ...) {
+  grDevices::pdf(file.path("../figures/pdfs", basename(file)),
+                 width = width, height = height, ...)
+}
+
 knitr::opts_chunk$set(
   echo = TRUE,
-  # Saves PNGs to the root /figures folder
-  fig.path = "../figures/knitted_mds/" 
+  fig.path = paste0("../figures/knitted_mds/", fig_prefix, "-"),
+  dev     = if (save_pdfs) c("png", "pdf_to_folder") else "png",
+  fig.ext = if (save_pdfs) c("png", "pdf")           else "png"
 )
 ```
 
@@ -310,86 +325,6 @@ storage_summary <- do.call(data.frame, storage_summary)
 names(storage_summary) <- c("method", "plate", "n", "mean_pct_of_live")
 storage_summary <- storage_summary[order(storage_summary$method, storage_summary$plate), ]
 kable(storage_summary, digits = 0, row.names = FALSE)
-```
-
-```{r storage-plot, fig.width=7.5, fig.height=5.5}
-method_order <- c("Live",
-                  "Glycerol/PBS, RT", "Glycerol/PBS, -80 °C",
-                  "Glycerol, RT", "Glycerol, -80 °C",
-                  "PBS, RT", "PBS, -80 °C",
-                  "Tris, RT", "Tris, -80 °C",
-                  "80% EtOH, RT", "80% EtOH, -80 °C", "100% EtOH, -80 °C")
-method_order <- intersect(method_order, unique(storage$method))
-storage_plates <- c("07/10 (24 h)", "07/17 (24 h)", "07/31 (1 week)")
-storage_pch    <- setNames(c(1, 16, 15), storage_plates)
-storage_dy     <- setNames(c(-0.2, 0, 0.2), storage_plates)
-
-y_pos <- setNames(rev(seq_along(method_order)), method_order)
-sm <- storage_summary[storage_summary$method %in% method_order, ]
-
-par(mar = c(4.5, 10, 3, 1))
-plot(NA, xlim = c(0, max(storage$pct_of_live, 110) * 1.05),
-     ylim = c(0.5, length(method_order) + 0.5),
-     yaxt = "n", xlab = expression(alpha*"-glucosidase activity (% of live for specific assay)"), ylab = "",
-     main = "Storage methods: activity kept vs. live larvae")
-axis(2, at = y_pos, labels = names(y_pos), las = 1, cex.axis = 0.85)
-abline(v = 100, lty = 2, col = "grey50")
-abline(h = seq(1.5, length(method_order) - 0.5), col = "grey90")
-points(storage$pct_of_live, y_pos[storage$method] + storage_dy[storage$plate],
-       pch = storage_pch[storage$plate], cex = 0.7,
-       col = adjustcolor(slcmad_col, alpha.f = 0.4))
-points(sm$mean_pct_of_live, y_pos[sm$method] + storage_dy[sm$plate],
-       pch = storage_pch[sm$plate], cex = 1.6, col = slcmad_col, lwd = 1.5)
-legend("bottomright", bty = "n", cex = 0.8, pch = storage_pch, col = slcmad_col,
-       legend = storage_plates, title = "Plate (large = mean, small = larva)")
-```
-  
-Box plot style:
-```{r storage-plot-box, fig.width=8.5, fig.height=6}
-method_order <- c("Live",
-                  "Glycerol/PBS, RT", "Glycerol/PBS, -80 °C",
-                  "Glycerol, RT", "Glycerol, -80 °C",
-                  "PBS, RT", "PBS, -80 °C",
-                  "Tris, RT", "Tris, -80 °C",
-                  "80% EtOH, RT", "80% EtOH, -80 °C", "100% EtOH, -80 °C")
-method_order   <- intersect(method_order, unique(storage$method))
-storage_plates <- c("07/10 (24 h)", "07/17 (24 h)", "07/31 (1 week)")
-plate_fill     <- setNames(sapply(c(0.15, 0.45, 0.8),
-                                  function(a) adjustcolor(slcmad_col, alpha.f = a)),
-                           storage_plates)
-storage_dy     <- setNames(c(0.25, 0, -0.25), storage_plates)   # 07/10 on top in each row
-
-# One box per method x plate, placed in that method's row
-y_pos <- setNames(rev(seq_along(method_order)), method_order)
-st <- storage[storage$method %in% method_order, ]
-st$box <- factor(paste(st$method, st$plate, sep = " | "))
-box_method <- sub(" \\| .*$", "", levels(st$box))
-box_plate  <- sub("^.* \\| ", "", levels(st$box))
-
-par(mar = c(4.5, 10, 3, 9))
-boxplot(pct_of_live ~ box, data = st, horizontal = TRUE,
-        at = y_pos[box_method] + storage_dy[box_plate], boxwex = 0.22,
-        col = plate_fill[box_plate], border = slcmad_col, lwd = 1,
-        outline = FALSE, axes = FALSE, ann = FALSE,
-        xlim = c(0.5, length(method_order) + 0.5),
-        ylim = c(0, max(st$pct_of_live) * 1.05))
-axis(1)
-axis(2, at = y_pos, labels = names(y_pos), las = 1, cex.axis = 0.85)
-box()
-abline(v = 100, lty = 2, col = "grey50")
-abline(h = seq(1.5, length(method_order) - 0.5), col = "grey90")
-set.seed(1)
-points(st$pct_of_live,
-       jitter(y_pos[st$method] + storage_dy[st$plate], amount = 0.04),
-       pch = 16, cex = 0.6, col = adjustcolor(slcmad_col, alpha.f = 0.7))
-box_means <- tapply(st$pct_of_live, st$box, mean)
-   points(box_means, y_pos[box_method] + storage_dy[box_plate],
-          pch = 23, bg = "white", col = slcmad_col, cex = 1)
-title(main = "Storage methods: activity kept vs. live larvae",
-      xlab = expression(alpha*"-glucosidase activity (% of live for specific assay)"))
-legend("topright", inset = c(-0.28, 0), xpd = TRUE, bty = "n", cex = 0.8,
-       fill = plate_fill, border = slcmad_col, legend = storage_plates,
-       title = "Plate")
 ```
   
 Box plot style y-axis

@@ -1,7 +1,7 @@
 Alina’s alpha-glucosidase assays 07/31/2026: storage methods (SLCMAD)
 ================
 Norah Saarman
-2026-10-22
+2026-10-23
 
 - [Overview](#overview)
 - [Plate map](#plate-map)
@@ -80,7 +80,7 @@ All larvae are SLCMAD, so every box uses the SLCMAD color from the Lsph
 probit figures. The excluded well (B5) is an open circle.
 
 ``` r
-slcmad_col <- "#0072B2"
+slcmad_col <- "#005A9C"   # deeper blue  (was #0072B2)
 ```
 
 # Data
@@ -248,9 +248,9 @@ if (requireNamespace("multcomp", quietly = TRUE)) {
     ## 
     ## Linear Hypotheses:
     ##                              Estimate Std. Error t value Pr(>|t|)    
-    ## PBS, RT - Live == 0           -55.329     13.812  -4.006   0.0032 ** 
-    ## Glycerol/PBS, RT - Live == 0    9.033     13.812   0.654   0.8420    
-    ## EtOH, -80 °C - Live == 0      -78.509     13.812  -5.684   <0.001 ***
+    ## PBS, RT - Live == 0           -55.329     13.812  -4.006  0.00307 ** 
+    ## Glycerol/PBS, RT - Live == 0    9.033     13.812   0.654  0.84209    
+    ## EtOH, -80 °C - Live == 0      -78.509     13.812  -5.684  < 0.001 ***
     ## ---
     ## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1
     ## (Adjusted p values reported -- single-step method)

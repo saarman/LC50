@@ -76,9 +76,9 @@ plate_map <- data.frame(
 Same palette as the Lsph probit figures.
 
 ``` r
-colony_colors <- c(SLCMAD = "#0072B2",
-                   Green  = "#009E73",
-                   White  = "#7B5EA7")
+colony_colors <- c(SLCMAD   = "#005A9C",   # deeper blue  (was #0072B2)
+                   Green    = "#007A55",   # deeper green (was #009E73)
+                   White    = "#5E3C99")   # deeper purple (was #7B5EA7)
 ```
 
 # Data

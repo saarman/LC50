@@ -1,7 +1,7 @@
 Alina’s Bioassays Probit - LC50 and LC90
 ================
 Norah Saarman
-2026-10-22
+2026-10-23
 
 - [Overview](#overview)
 - [Helper functions](#helper-functions)
@@ -293,11 +293,14 @@ summarise_assay <- function(d) {
 ``` r
 # Colony colors (points and fitted curve). White is shown in purple so it is
 # visible on a white background; Yellow is a darker gold for the same reason.
-colony_colors <- c(Green  = "#009E73",
-                   Yellow = "#E6AB02",
-                   White  = "#7B5EA7",
-                   Orange = "#E66100",
-                   SLCMAD = "#0072B2")
+colony_colors <- c(Yellow   = "#B8860B",   # mustard gold (was #E6AB02)
+                   SLCMAD   = "#005A9C",   # deeper blue  (was #0072B2)
+                   Green    = "#007A55",   # deeper green (was #009E73)
+                   Orange   = "#D04A00",   # burnt orange (was #E66100)
+                   White    = "#5E3C99",   # deeper purple (was #7B5EA7)
+                   "Wild R" = "grey20")
+slcmad_col <- colony_colors[["SLCMAD"]]
+
  
 # LC lines are neutral so they never clash with a colony color;
 # LC50 vs LC90 is told apart by shade and line type.
@@ -674,7 +677,7 @@ fit_g3$lc
 plot_probit(fit_g3, "Green (G3), Dec 3rd, 2025: at 36 hours", col = colony_colors[["Green"]])
 ```
 
-![](../figures/knitted_mds/g3-36h-1.png)<!-- -->
+![](../figures/knitted_mds/LC50_LC90_drc_Alina_final-g3-36h-1.png)<!-- -->
 
 ## Green (G4) Feb 10, 2026: 24 hours
 
@@ -708,7 +711,7 @@ fit_g4$lc
 plot_probit(fit_g4, "Green (G4) Feb 10, 2026: 24 hours", col = colony_colors[["Green"]])
 ```
 
-![](../figures/knitted_mds/g4-24h-1.png)<!-- -->
+![](../figures/knitted_mds/LC50_LC90_drc_Alina_final-g4-24h-1.png)<!-- -->
 
 ### Dropping low doses
 
@@ -937,7 +940,7 @@ for (colony_name in names(best_assay)) {
 }
 ```
 
-![](../figures/knitted_mds/best-plots-1.png)<!-- -->![](../figures/knitted_mds/best-plots-2.png)<!-- -->![](../figures/knitted_mds/best-plots-3.png)<!-- -->![](../figures/knitted_mds/best-plots-4.png)<!-- -->![](../figures/knitted_mds/best-plots-5.png)<!-- -->
+![](../figures/knitted_mds/LC50_LC90_drc_Alina_final-best-plots-1.png)<!-- -->![](../figures/knitted_mds/LC50_LC90_drc_Alina_final-best-plots-2.png)<!-- -->![](../figures/knitted_mds/LC50_LC90_drc_Alina_final-best-plots-3.png)<!-- -->![](../figures/knitted_mds/LC50_LC90_drc_Alina_final-best-plots-4.png)<!-- -->![](../figures/knitted_mds/LC50_LC90_drc_Alina_final-best-plots-5.png)<!-- -->
 
 ## Dose-response panel.
 
@@ -1052,7 +1055,7 @@ for (i in seq_along(colonies)) draw_timecourse(colonies[i], first_column = i == 
 for (i in seq_along(colonies)) draw_panel(colonies[i],      first_column = i == 1)
 ```
 
-![](../figures/knitted_mds/best-panel-1.png)<!-- -->
+![](../figures/knitted_mds/LC50_LC90_drc_Alina_final-best-panel-1.png)<!-- -->
 
 ``` r
 par(old_par)
