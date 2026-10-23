@@ -51,3 +51,6 @@ rsconnect/
 
 # produced vignettes
 figures/*.pdf
+
+# final figures in pdf
+figures/pdfs/*.pdf
