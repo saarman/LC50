@@ -13,66 +13,78 @@ knit: (function(input, ...) {
     )
   })
 ---
-
+  
+  
 ```{r setup, include=FALSE}
+library(knitr)
+ 
+# Figure filenames start with the Rmd's name, e.g. alpha-glucosidase-2026-09-11_Alina-boxplot-1
+fig_prefix <- sub("\\.Rmd$", "", knitr::current_input())
+ 
+# PDF device that writes straight into ../figures/pdfs/ (gitignored), same filename as the PNG
+pdf_to_folder <- function(file, width, height, ...) {
+  grDevices::pdf(file.path("../figures/pdfs", basename(file)),
+                 width = width, height = height, ...)
+}
+ 
 knitr::opts_chunk$set(
   echo = TRUE,
-  # Saves PNGs to ../figures/knitted_mds/, prefixed with the Rmd's name
-  fig.path = paste0("../figures/knitted_mds/",
-                    sub("\\.Rmd$", "", knitr::current_input()), "-")
+  fig.path = paste0("../figures/knitted_mds/", fig_prefix, "-"),
+  dev = c("png", "pdf_to_folder"),   # PNG for the .md on GitHub; PDF for slides
+  fig.ext = c("png", "pdf")
 )
 ```
-
+ 
 RStudio Configuration:
    - **R version:** R 4.4.0 (Geospatial packages)  
    - **Number of cores:** 1 (up to 32 available)   
    - **Account:** saarman-np  
    - **Partition:** saarman-np (now auto allows multiple simultaneous jobs)  
-
+ 
 ```{r libraries, message=FALSE, include = FALSE}
 library(readxl)
 library(knitr)
-
+ 
 # Folder holding the plate-reader export (edit if it lives elsewhere)
 data_dir    <- "../data"
 results_dir <- "../results"
 ```
-
+ 
 # Overview
-
+ 
 Sigma-Aldrich alpha-Glucosidase Activity Assay Kit (MAK123), read on the
 Multiskan SkyHigh at 405 nm, kinetic reads every 6 s for 20 min at 25.5 °C.
-
+ 
 This plate tests **pooling**: 1, 2, 3, 4 or 5 larvae per sample, 3 wells
 each. PBS was scaled with pool size (50 µL per larva), so the homogenate
 concentration is about the same in every group and U/L can be compared
 directly across 1x-5x.
-
+ 
 **Activity.** From the kit:
-
+ 
 $$\text{Activity (U/L)} = \frac{A405_{final} - A405_{initial}}{A405_{calibrator} - A405_{water}} \times 250$$
-
+ 
 - *initial* = first kinetic read (t = 0); *final* = last read (t = 20 min)
 - calibrator and water = their own reads at 20 min
 - If A405_final > 1.0, the kit says to dilute with water and repeat. Set
   `dilution` in the plate map for any re-run well and the result is
   multiplied back up.
-
+ 
 One unit hydrolyzes 1.0 µmole substrate per minute at pH 7.0.
-
+ 
 # Plate map
-
+ 
 From Alina's plate map. A3 was read but is unlabeled, so it is not used.
-
+ 
 ```{r plate-map}
 infile    <- file.path(data_dir, "Kinetic Abs @ 405 2026-09-11 11-03-49.xlsx")
 run_label <- "09_11"
-
+ 
 water_well <- "A1"   # 220 µL water
 cal_well   <- "A2"   # 200 µL calibrator + 20 µL water
-
+ 
 group_order <- c("1x", "2x", "3x", "4x", "5x")
-
+ 
 plate_map <- data.frame(
   well     = c("B1","B2","B3", "C1","C2","C3", "D1","D2","D3",
                "E1","E2","E3", "F1","F2","F3"),
@@ -80,25 +92,25 @@ plate_map <- data.frame(
   dilution = 1
 )
 ```
-
+ 
 # Colors
-
-Same palette as the Lsph probit figures (most susceptible to most resistant).
-This plate has no colony comparison, so the five colors are simply reused in
-order for 1x-5x.
-
+ 
+Presentation palette, matching the master summary and the Lsph probit
+figures (most susceptible to most resistant). This plate has no colony
+comparison, so every box is drawn in the SLCMAD blue.
+ 
 ```{r colors}
-pal <- c("#E6AB02", "#0072B2", "#009E73", "#E66100", "#7B5EA7")
+pal <- c("#B8860B", "#005A9C", "#007A55", "#D04A00", "#5E3C99")
 names(pal) <- group_order
-#To draw every box in one colony's color instead, e.g. SLCMAD:
-pal[] <- "#0072B2"
+# Every box in one colony's color, SLCMAD:
+pal[] <- "#005A9C"
 ```
-
+ 
 # Data
-
+ 
 The "Raw data 405 nm" sheet has one row per well per read (well, wavelength,
 absorbance, time in seconds).
-
+ 
 ```{r read-data}
 raw <- read_excel(infile, sheet = "Raw data 405 nm", skip = 2)
 names(raw)[1:4] <- c("well", "wavelength", "abs", "time_s")
@@ -106,40 +118,40 @@ raw <- as.data.frame(raw[!is.na(raw$abs), ])
 raw$well   <- gsub(" ", "", raw$well)          # "A 1" -> "A1"
 raw$time_s <- as.numeric(raw$time_s)
 raw <- raw[order(raw$well, raw$time_s), ]
-
+ 
 table(raw$well)                                # reads per well (expect 201)
 ```
-
+ 
 # Activity
-
+ 
 ```{r activity}
 first_abs <- tapply(raw$abs, raw$well, function(x) x[1])
 last_abs  <- tapply(raw$abs, raw$well, function(x) x[length(x)])
-
+ 
 water_20 <- last_abs[[water_well]]
 cal_20   <- last_abs[[cal_well]]
 denom    <- cal_20 - water_20
 cat(sprintf("Calibrator (%s) at 20 min = %.4f\nWater (%s) at 20 min = %.4f\n",
             cal_well, cal_20, water_well, water_20))
-
+ 
 agc <- plate_map
 agc$A405_initial <- as.numeric(first_abs[agc$well])
 agc$A405_final   <- as.numeric(last_abs[agc$well])
 agc$activity_U_L <- (agc$A405_final - agc$A405_initial) / denom * 250 * agc$dilution
 agc$over_1       <- agc$A405_final > 1.0
 agc$group        <- factor(agc$group, levels = group_order)
-
+ 
 if (any(agc$over_1))
   warning("A405_final > 1.0 in wells: ", paste(agc$well[agc$over_1], collapse = ", "),
           " -- kit says dilute and repeat.")
-
+ 
 write.csv(agc, file.path(results_dir, paste0("agc_activity_", run_label, ".csv")),
           row.names = FALSE)
 kable(agc, digits = 3)
 ```
-
+ 
 ## Summary by group
-
+ 
 ```{r summary}
 agc_summary <- data.frame(
   group    = group_order,
@@ -148,16 +160,16 @@ agc_summary <- data.frame(
   sd_U_L   = as.numeric(tapply(agc$activity_U_L, agc$group, sd))
 )
 agc_summary$cv_pct <- 100 * agc_summary$sd_U_L / agc_summary$mean_U_L
-
+ 
 write.csv(agc_summary, file.path(results_dir, paste0("agc_summary_", run_label, ".csv")),
           row.names = FALSE)
 kable(agc_summary, digits = 1)
 ```
-
+ 
 # Boxplot
-
+ 
 Boxes show the three wells per group; points are the individual wells.
-
+ 
 ```{r boxplot, fig.width=6.5, fig.height=5}
 par(mar = c(4.5, 4.8, 3, 1))
 boxplot(activity_U_L ~ group, data = agc,
@@ -175,13 +187,13 @@ points(jitter(as.numeric(agc$group), amount = 0.12), agc$activity_U_L,
 mtext("n = 3 wells per group; PBS scaled 50 µL per larva",
       side = 3, line = 0.2, cex = 0.8, col = "grey40")
 ```
-
+ 
 # QC: kinetic curves
-
+ 
 Each well's A405 over the 20 min. The formula uses only the first and last
 reads, so a well whose signal jumps around can shift its activity value.
 Water, calibrator and A3 are dashed grey.
-
+ 
 ```{r kinetics, fig.width=7, fig.height=5}
 par(mar = c(4.5, 4.5, 3, 1))
 plot(NA, xlim = range(raw$time_s) / 60, ylim = range(raw$abs), las = 1,
@@ -197,3 +209,4 @@ legend("topleft", bty = "n", cex = 0.8,
        legend = c(group_order, "water / calibrator / A3"),
        col = c(pal[group_order], "grey40"), lty = c(rep(1, 5), 2))
 ```
+

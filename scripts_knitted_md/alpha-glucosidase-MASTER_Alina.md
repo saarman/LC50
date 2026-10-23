@@ -2,7 +2,7 @@ Alina’s alpha-glucosidase assays MASTER: highlights from 10 plates
 (June - October 2026)
 ================
 Norah Saarman
-2026-10-22
+2026-10-23
 
 - [Overview](#overview)
   - [The ten plates](#the-ten-plates)
@@ -20,6 +20,11 @@ Norah Saarman
   - [Body parts (06/12)](#body-parts-0612)
   - [SLCMAD across plates](#slcmad-across-plates)
 - [Highlights](#highlights)
+
+RStudio Configuration: - **R version:** R 4.4.0 (Geospatial packages)  
+- **Number of cores:** 1 (up to 32 available)  
+- **Account:** saarman-np  
+- **Partition:** saarman-np (now auto allows multiple simultaneous jobs)
 
 RStudio Configuration: - **R version:** R 4.4.0 (Geospatial packages)  
 - **Number of cores:** 1 (up to 32 available)  
@@ -106,18 +111,35 @@ lc <- read.csv(file.path(results_dir, "lsph_summary_table_24h.csv"),
 
 ## Colors
 
-Same palette as the Lsph probit figures. Wild resistant larvae aren’t
-one of the colonies, so they are dark grey.
+Presentation palette: the same hues as the Lsph probit figures, darkened
+for higher contrast on slides and projectors (Yellow is a mustard gold).
+Wild resistant larvae aren’t one of the colonies, so they are near-black
+grey.
 
 ``` r
 colony_order  <- c("Yellow", "SLCMAD", "Green", "Orange", "White", "Wild R")
-colony_colors <- c(Yellow   = "#E6AB02",
-                   SLCMAD   = "#0072B2",
-                   Green    = "#009E73",
-                   Orange   = "#E66100",
-                   White    = "#7B5EA7",
-                   "Wild R" = "grey30")
+colony_colors <- c(Yellow   = "#B8860B",   # mustard gold (was #E6AB02)
+                   SLCMAD   = "#005A9C",   # deeper blue  (was #0072B2)
+                   Green    = "#007A55",   # deeper green (was #009E73)
+                   Orange   = "#D04A00",   # burnt orange (was #E66100)
+                   White    = "#5E3C99",   # deeper purple (was #7B5EA7)
+                   "Wild R" = "grey20")
 slcmad_col <- colony_colors[["SLCMAD"]]
+
+# Plot labels: colony name plus resistance ratio (RR50 vs. SLCMAD at 24 h,
+# from the probit summary table), e.g. "Yellow / Colony / (RR50 = 0.251)"
+rr_label <- function(x) {
+  x <- gsub(" - ", "-", x)
+  if (grepl("^[<>]", x)) paste0("(RR50 ", x, ")") else paste0("(RR50 = ", x, ")")
+}
+rr_slcmad <- setNames(lc[["RR50 vs SLCMAD"]], lc$Colony)
+
+colony_labels <- c(Yellow   = "Yellow\nColony\n(RR50=0.251)",   
+                   SLCMAD   = "SLCMAD\nColony\n(RR50=1)",   
+                   Green    =  "Green\nColony\n(RR50=9,090)",   
+                   Orange   = "Orange\nColony\n(RR50>1,060)",   
+                   White    = "White\nColony\n(RR50>10,600)",   
+                   "Wild R" = "Wild SLC\n(survivors)")
 ```
 
 # 1. Colony comparison
@@ -129,12 +151,12 @@ plates:
 - **06/25** and **07/23** (Multiskan)
 - **08/14** (unexposed controls and SLCMAD only) and **08/17** (USU
   reader, read by hand)
-- **10/01** (single larvae only; Wild R were stored, method not
-  recorded)
+- **10/01** (single larvae only)
 
 Left out: 07/17 Orange, Green and wild larvae (a week in EtOH, which
-destroys activity; see storage below), pooled samples, and Lsph-exposed
-larvae.
+destroys activity; see storage below); the 10/01 wild resistant larvae
+(the only stored larvae in this comparison, storage method not
+recorded); pooled samples; and Lsph-exposed larvae.
 
 ``` r
 colony_data <- rbind(
@@ -143,9 +165,9 @@ colony_data <- rbind(
   with(d0814[d0814$colony == "SLCMAD" | d0814$dose %in% 0, ],
        data.frame(plate = "08/14", colony = colony, activity = activity_U_L)),
   data.frame(plate = "08/17", colony = d0817$colony, activity = d0817$activity_U_L),
-  with(d1001[d1001$larvae == 1 & !d1001$exclude, ],
-       data.frame(plate = "10/01", colony = sub(" \\(stored\\)", "", colony),
-                  activity = activity_U_L))
+  # 10/01: single larvae only; the stored wild larvae are left out (not comparable)
+  with(d1001[d1001$larvae == 1 & !d1001$exclude & d1001$colony != "Wild R (stored)", ],
+       data.frame(plate = "10/01", colony = colony, activity = activity_U_L))
 )
 colony_data$colony <- factor(colony_data$colony, levels = colony_order)
 plate_order <- c("06/25", "07/23", "08/14", "08/17", "10/01")
@@ -161,7 +183,7 @@ table(colony_data$colony, colony_data$plate)
     ##   Green     10     5     4     5     5
     ##   Orange     0     5     0     0     0
     ##   White     10     5     0     0     0
-    ##   Wild R     0     0     0     5     5
+    ##   Wild R     0     0     0     5     0
 
 ## All plates together
 
@@ -178,18 +200,21 @@ colony_data$x <- as.numeric(colony_data$colony) + plate_offset[as.character(colo
 means <- aggregate(activity ~ colony + plate, data = colony_data, FUN = mean)
 means$x <- as.numeric(means$colony) + plate_offset[as.character(means$plate)]
 
-par(mar = c(4.5, 4.8, 3, 8))
+par(mar = c(6, 4.8, 3, 8))
 plot(NA, xlim = c(0.5, length(colony_order) + 0.5),
      ylim = c(0, max(colony_data$activity) * 1.05),
      xaxt = "n", las = 1, xlab = "",
      ylab = expression(alpha*"-glucosidase activity (U/L)"),
      main = expression(alpha*"-glucosidase activity by colony, all plates"))
-axis(1, at = seq_along(colony_order), labels = colony_order)
+axis(1, at = seq_along(colony_order), labels = FALSE)
+# mtext() draws every label even if long ones come close (axis() would drop some)
+mtext(colony_labels[colony_order], side = 1, at = seq_along(colony_order),
+      line = 0.8, padj = 1, cex = 0.8)
 abline(v = seq(1.5, length(colony_order) - 0.5), col = "grey90")
 set.seed(1)
 points(jitter(colony_data$x, amount = 0.03), colony_data$activity,
        pch = plate_pch[as.character(colony_data$plate)], cex = 0.9,
-       col = adjustcolor(colony_colors[as.character(colony_data$colony)], alpha.f = 0.7))
+       col = adjustcolor(colony_colors[as.character(colony_data$colony)], alpha.f = 0.85))
 segments(means$x - 0.06, means$activity, means$x + 0.06, means$activity,
          lwd = 2.5, col = colony_colors[as.character(means$colony)])
 legend("topright", inset = c(-0.2, 0), xpd = TRUE, bty = "n", cex = 0.8,
@@ -222,7 +247,7 @@ kable(round(mean_tab, 0), caption = "Mean activity (U/L) by colony and plate")
 | Green  |    26 |    26 |    65 |    80 |    45 |
 | Orange |    NA |    29 |    NA |    NA |    NA |
 | White  |    26 |    21 |    NA |    NA |    NA |
-| Wild R |    NA |    NA |    NA |    77 |   155 |
+| Wild R |    NA |    NA |    NA |    77 |    NA |
 
 Mean activity (U/L) by colony and plate
 
@@ -237,7 +262,7 @@ kable(round(ratio, 2),    caption = "Mean activity relative to SLCMAD on the sam
 | Green  |  0.27 |  0.26 |  0.62 |  0.44 |  0.29 |
 | Orange |    NA |  0.30 |    NA |    NA |    NA |
 | White  |  0.27 |  0.22 |    NA |    NA |    NA |
-| Wild R |    NA |    NA |    NA |  0.42 |  1.02 |
+| Wild R |    NA |    NA |    NA |  0.42 |    NA |
 
 Mean activity relative to SLCMAD on the same plate
 
@@ -270,7 +295,7 @@ kable(resistance_summary)
 | Green  | 429 (279 - 660)         |                        0.38 |      5 |
 | Orange | 50 - 500                |                        0.30 |      1 |
 | White  | \> 500                  |                        0.25 |      2 |
-| Wild R | not tested              |                        0.72 |      2 |
+| Wild R | not tested              |                        0.42 |      1 |
 
 # 2. Storage methods
 
@@ -362,7 +387,7 @@ sm <- storage_summary[storage_summary$method %in% method_order, ]
 par(mar = c(4.5, 10, 3, 1))
 plot(NA, xlim = c(0, max(storage$pct_of_live, 110) * 1.05),
      ylim = c(0.5, length(method_order) + 0.5),
-     yaxt = "n", xlab = "Activity, % of live SLCMAD on the same plate", ylab = "",
+     yaxt = "n", xlab = expression(alpha*"-glucosidase activity (% of live for specific assay)"), ylab = "",
      main = "Storage methods: activity kept vs. live larvae")
 axis(2, at = y_pos, labels = names(y_pos), las = 1, cex.axis = 0.85)
 abline(v = 100, lty = 2, col = "grey50")
@@ -421,7 +446,7 @@ box_means <- tapply(st$pct_of_live, st$box, mean)
    points(box_means, y_pos[box_method] + storage_dy[box_plate],
           pch = 23, bg = "white", col = slcmad_col, cex = 1)
 title(main = "Storage methods: activity kept vs. live larvae",
-      xlab = "Activity, % of live SLCMAD on the same plate")
+      xlab = expression(alpha*"-glucosidase activity (% of live for specific assay)"))
 legend("topright", inset = c(-0.28, 0), xpd = TRUE, bty = "n", cex = 0.8,
        fill = plate_fill, border = slcmad_col, legend = storage_plates,
        title = "Plate")
@@ -473,7 +498,7 @@ box_means <- tapply(st$pct_of_live, st$box, mean)
 points(x_pos[box_method] + storage_dx[box_plate], box_means,
        pch = 23, bg = "white", col = slcmad_col, cex = 1)
 title(main = "Storage methods: activity kept vs. live larvae",
-      ylab = "Activity, % of live SLCMAD on the same plate")
+      ylab = expression(alpha*"-glucosidase activity (% of live activity)"))
 title(xlab = "Storage method", line = 7.5)
 # Legend inside the empty top-right corner: plate fills plus the mean diamond
 legend("topright", bty = "n", cex = 0.8,
@@ -605,9 +630,9 @@ the most susceptible colony in the probits (LC50 about 0.01 ppm), read
 only 0.45-0.71 of SLCMAD on 08/14, 08/17 and 10/01, about the same as
 Green on 08/14 and 08/17. SLCMAD is high on every plate. So the large
 gap between SLCMAD and the resistant colonies may partly reflect SLCMAD
-itself, not susceptibility in general. Wild resistant larvae were
-inconsistent: 0.42 of SLCMAD on 08/17 (live) but 1.02 on 10/01 (stored,
-method not recorded).
+itself, not susceptibility in general. Live wild SLC survivors (08/17,
+the only plate with comparable wild larvae) read 0.42 of SLCMAD, about
+the same as Yellow and Green on that plate.
 
 **3. Storage: 50% glycerol / 50% PBS at room temperature.** It kept
 about all of the live activity after 24 h (98%) and after a week (110%).
@@ -633,7 +658,8 @@ temperature not logged).
 **Open questions for Alina.**
 
 1.  PBS volumes for single vs. pooled samples on 09/11 and 10/01.
-2.  Storage method for the 10/01 “Wild R (stored)” larvae.
+2.  Storage method for the 10/01 “Wild R (stored)” larvae (left out of
+    the colony comparison until this is known).
 3.  Live or stored larvae on 06/25 and 07/23 (the main colony
     comparisons).
 4.  White: notes call it the “susceptible” USU colony, but it is the

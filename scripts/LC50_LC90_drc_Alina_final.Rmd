@@ -26,7 +26,8 @@ RStudio Configuration:
    - **R version:** R 4.4.0 (Geospatial packages)  
    - **Number of cores:** 1 (up to 32 available)   
    - **Account:** saarman-np  
-   - **Partition:** saarman-np (now auto allows multiple simultaneous jobs)  
+   - **Partition:** saarman-np (now auto allows multiple simultaneous jobs) 
+   
 ```{r libraries, message=FALSE, include = FALSE}
 library(drc)
 library(tidyr)
@@ -290,11 +291,14 @@ summarise_assay <- function(d) {
 ```{r helper-plot}
 # Colony colors (points and fitted curve). White is shown in purple so it is
 # visible on a white background; Yellow is a darker gold for the same reason.
-colony_colors <- c(Green  = "#009E73",
-                   Yellow = "#E6AB02",
-                   White  = "#7B5EA7",
-                   Orange = "#E66100",
-                   SLCMAD = "#0072B2")
+colony_colors <- c(Yellow   = "#B8860B",   # mustard gold (was #E6AB02)
+                   SLCMAD   = "#005A9C",   # deeper blue  (was #0072B2)
+                   Green    = "#007A55",   # deeper green (was #009E73)
+                   Orange   = "#D04A00",   # burnt orange (was #E66100)
+                   White    = "#5E3C99",   # deeper purple (was #7B5EA7)
+                   "Wild R" = "grey20")
+slcmad_col <- colony_colors[["SLCMAD"]]
+
  
 # LC lines are neutral so they never clash with a colony color;
 # LC50 vs LC90 is told apart by shade and line type.

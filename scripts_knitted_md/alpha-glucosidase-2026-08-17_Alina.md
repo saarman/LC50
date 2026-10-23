@@ -2,7 +2,7 @@ Alina’s alpha-glucosidase assays 08/17/2026: wild and colony larvae (USU
 reader)
 ================
 Norah Saarman
-2026-10-22
+2026-10-23
 
 - [Overview](#overview)
 - [Plate map](#plate-map)
@@ -14,7 +14,8 @@ Norah Saarman
 - [QC: reader stability](#qc-reader-stability)
 - [Notes](#notes)
 
-RStudio Configuration: - **R version:** R 4.4.0 (Geospatial packages)  
+RStudio Configuration:  
+- **R version:** R 4.4.0 (Geospatial packages)  
 - **Number of cores:** 1 (up to 32 available)  
 - **Account:** saarman-np  
 - **Partition:** saarman-np (now auto allows multiple simultaneous jobs)
@@ -70,15 +71,23 @@ plate_map <- data.frame(
 
 # Colors
 
-Same palette as the Lsph probit figures and the 10/01 plate. The wild
-resistant samples aren’t one of the colonies, so they are drawn in
-neutral dark grey.
+Presentation palette and plot labels, matching the master summary and
+the Lsph probit figures (higher contrast; Yellow is a mustard gold). The
+wild resistant samples aren’t one of the colonies, so they are drawn in
+near-black grey. Labels give each colony’s RR50 vs. SLCMAD at 24 h.
 
 ``` r
-colony_colors <- c(Yellow   = "#E6AB02",
-                   SLCMAD   = "#0072B2",
-                   Green    = "#009E73",
-                   "Wild R" = "grey30")
+colony_colors <- c(Yellow   = "#B8860B",
+                   SLCMAD   = "#005A9C",
+                   Green    = "#007A55",
+                   "Wild R" = "grey20")
+
+colony_labels <- c(Yellow   = "Yellow\nColony\n(RR50=0.251)",
+                   SLCMAD   = "SLCMAD\nColony\n(RR50=1)",
+                   Green    = "Green\nColony\n(RR50=9,090)",
+                   Orange   = "Orange\nColony\n(RR50>1,060)",
+                   White    = "White\nColony\n(RR50>10,600)",
+                   "Wild R" = "Wild SLC\n(survivors)")
 ```
 
 # Data
@@ -190,11 +199,11 @@ larvae.
 ``` r
 cols <- colony_colors[colony_order]
 
-par(mar = c(4.5, 4.8, 3, 1))
+par(mar = c(5.5, 4.8, 3, 1))
 boxplot(activity_U_L ~ colony, data = agc,
         col    = adjustcolor(cols, alpha.f = 0.35),
         border = cols,
-        lwd = 1.5, outline = FALSE, las = 1,
+        lwd = 1.5, outline = FALSE, las = 1, xaxt = "n",
         ylim = c(0, max(agc$activity_U_L) * 1.1),
         xlab = "",
         ylab = expression(alpha*"-glucosidase activity (U/L)"),
@@ -203,6 +212,10 @@ set.seed(1)
 points(jitter(as.numeric(agc$colony), amount = 0.12), agc$activity_U_L,
        pch = 16, cex = 1.2,
        col = adjustcolor(colony_colors[as.character(agc$colony)], alpha.f = 0.8))
+axis(1, at = seq_along(colony_order), labels = FALSE)
+# mtext() draws every multi-line label (axis() can drop ones that come close)
+mtext(colony_labels[colony_order], side = 1, at = seq_along(colony_order),
+      line = 0.8, padj = 1, cex = 0.8)
 mtext("Single larvae, n = 5 per group; SLCMAD stored 3 days in glycerol/PBS",
       side = 3, line = 0.2, cex = 0.8, col = "grey40")
 ```

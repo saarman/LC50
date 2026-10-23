@@ -1,7 +1,7 @@
-Alina’s alpha-glucosidase assays 09/11/2026: pooling test (1x-5x larvae)
+Alina’s alpha-glucosidase assays 10/1/2026: pooling test (1x-5x larvae)
 ================
 Norah Saarman
-2026-10-22
+2026-10-23
 
 - [Overview](#overview)
 - [Plate map](#plate-map)
@@ -63,17 +63,17 @@ marked “Green \*” on the plate map; it is kept in the analysis (set
 ``` r
 infile    <- file.path(data_dir, "Kinetic Abs @ 405 2026-10-01 14-18-32.xlsx")
 run_label <- "2026-10-01"
-
+ 
 water_well   <- "A1"   # H2O control
 cal_h2o_well <- "A2"   # calibrator + H2O
 pbs_well     <- "A3"   # PBS control
 cal_pbs_well <- "A4"   # calibrator + PBS
-
+ 
 # Which calibrator pair to use for the activity: "water" (kit, Alina) or "pbs"
 use_blank <- "water"
-
+ 
 colony_order <- c("Yellow", "SLCMAD", "Green", "Wild R (stored)")
-
+ 
 plate_map <- data.frame(
   well   = c(paste0("B", 1:5), paste0("C", 1:5), paste0("D", 1:5), paste0("E", 1:5),
              paste0("F", 1:3), paste0("G", 1:3), paste0("H", 1:3)),
@@ -85,21 +85,23 @@ plate_map <- data.frame(
   exclude  = FALSE
 )
 # plate_map$exclude[plate_map$well == "D3"] <- TRUE   # to drop "Green *"
-
+ 
 plate_map$group <- ifelse(plate_map$larvae == 1, plate_map$colony,
                           paste(plate_map$colony, "x5"))
 ```
 
 # Colors
 
-Same palette as the Lsph probit figures. The wild resistant samples
-aren’t one of the colonies, so they are drawn in neutral dark grey.
+Presentation palette, matching the master summary and the Lsph probit
+figures (higher contrast; Yellow is a mustard gold). The wild resistant
+samples aren’t one of the colonies, so they are drawn in near-black
+grey.
 
 ``` r
-colony_colors <- c(Yellow            = "#E6AB02",
-                   SLCMAD            = "#0072B2",
-                   Green             = "#009E73",
-                   "Wild R (stored)" = "grey30")
+colony_colors <- c(Yellow            = "#B8860B",
+                   SLCMAD            = "#005A9C",
+                   Green             = "#007A55",
+                   "Wild R (stored)" = "grey20")
 ```
 
 # Data
@@ -127,7 +129,7 @@ raw <- as.data.frame(raw[(header_row + 1):nrow(raw), ])
 raw <- raw[!is.na(raw$well) & !is.na(raw$abs), ]
 raw$well <- gsub(" ", "", raw$well)            # "A 1" -> "A1"
 raw <- raw[order(raw$well, raw$time_s), ]
-
+ 
 table(raw$well)                                # reads per well (expect 201)
 ```
 
@@ -142,7 +144,7 @@ table(raw$well)                                # reads per well (expect 201)
 ``` r
 first_abs <- tapply(raw$abs, raw$well, function(x) x[1])
 last_abs  <- tapply(raw$abs, raw$well, function(x) x[length(x)])
-
+ 
 denom_water <- last_abs[[cal_h2o_well]] - last_abs[[water_well]]
 denom_pbs   <- last_abs[[cal_pbs_well]] - last_abs[[pbs_well]]
 cat(sprintf(paste0("At 20 min: water %.4f, calibrator+H2O %.4f -> denominator %.4f\n",
@@ -163,11 +165,11 @@ agc$activity_water_U_L <- delta / denom_water * 250 * agc$dilution
 agc$activity_pbs_U_L   <- delta / denom_pbs   * 250 * agc$dilution
 agc$activity_U_L <- if (use_blank == "water") agc$activity_water_U_L else agc$activity_pbs_U_L
 agc$over_1 <- agc$A405_final > 1.0
-
+ 
 if (any(agc$over_1))
   warning("A405_final > 1.0 in wells: ", paste(agc$well[agc$over_1], collapse = ", "),
           " -- kit says dilute and repeat.")
-
+ 
 write.csv(agc, file.path(results_dir, paste0("agc_activity_", run_label, ".csv")),
           row.names = FALSE)
 kable(agc[, c("well", "group", "A405_initial", "A405_final",
@@ -216,7 +218,7 @@ agc <- agc[!agc$exclude, ]
 ``` r
 group_order <- c(colony_order, paste(colony_order[1:3], "x5"))
 agc$group   <- factor(agc$group, levels = group_order)
-
+ 
 agc_summary <- data.frame(
   group    = group_order,
   n        = as.numeric(tapply(agc$activity_U_L, agc$group, length)),
@@ -224,7 +226,7 @@ agc_summary <- data.frame(
   sd_U_L   = as.numeric(tapply(agc$activity_U_L, agc$group, sd))
 )
 agc_summary$cv_pct <- 100 * agc_summary$sd_U_L / agc_summary$mean_U_L
-
+ 
 write.csv(agc_summary, file.path(results_dir, paste0("agc_summary_", run_label, ".csv")),
           row.names = FALSE)
 kable(agc_summary, digits = 1)
@@ -250,7 +252,7 @@ larvae.
 single <- droplevels(agc[agc$larvae == 1, ])
 single$group <- factor(single$group, levels = colony_order)
 cols <- colony_colors[colony_order]
-
+ 
 par(mar = c(4.5, 4.8, 3, 1))
 boxplot(activity_U_L ~ group, data = single,
         col    = adjustcolor(cols, alpha.f = 0.35),
@@ -284,7 +286,7 @@ pcol <- rep(colony_colors[pool_colonies], each = 2)
 fill <- adjustcolor(pcol, alpha.f = 1)
 fill[c(TRUE, FALSE)] <- adjustcolor(pcol[c(TRUE, FALSE)], alpha.f = 0.25)
 fill[c(FALSE, TRUE)] <- adjustcolor(pcol[c(FALSE, TRUE)], alpha.f = 0.7)
-
+ 
 par(mar = c(4.5, 4.8, 3, 1))
 boxplot(activity_U_L ~ box, data = paired, at = at, boxwex = 0.32,
         col = fill, border = pcol, lwd = 1.5, outline = FALSE, las = 1,
@@ -350,7 +352,7 @@ rate <- function(w, from_min, to_min) {
 }
 agc$rate_early <- sapply(agc$well, rate, from_min = 0,  to_min = 5)
 agc$rate_late  <- sapply(agc$well, rate, from_min = 15, to_min = 20)
-
+ 
 rate_check <- data.frame(
   group          = group_order,
   A405_t0        = as.numeric(tapply(agc$A405_initial, agc$group, mean)),
