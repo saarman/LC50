@@ -2,7 +2,7 @@ Alina’s alpha-glucosidase assays 07/10/2026: 24-hour storage methods
 (SLCMAD)
 ================
 Norah Saarman
-2026-10-22
+2026-10-23
 
 - [Overview](#overview)
 - [Plate map](#plate-map)
@@ -85,7 +85,13 @@ Lsph probit figures: open circles for room temperature, filled for
 frozen, diamond for live.
 
 ``` r
-slcmad_col <- "#0072B2"
+slcmad_col <- "#005A9C"
+colony_colors <- c(Yellow   = "#B8860B",   # mustard gold (was #E6AB02)
+                   SLCMAD   = "#005A9C",   # deeper blue  (was #0072B2)
+                   Green    = "#007A55",   # deeper green (was #009E73)
+                   Orange   = "#D04A00",   # burnt orange (was #E66100)
+                   White    = "#5E3C99",   # deeper purple (was #7B5EA7)
+                   "Wild R" = "grey20")
 ```
 
 # Data
@@ -240,11 +246,11 @@ if (requireNamespace("multcomp", quietly = TRUE)) {
     ## 
     ## Linear Hypotheses:
     ##                                     Estimate Std. Error t value Pr(>|t|)  
-    ## 80% EtOH, Room temp - Live == 0       -50.90      13.05  -3.900   0.0242 *
-    ## 80% EtOH, Frozen -80 °C - Live == 0   -15.30      13.05  -1.172   0.7151  
-    ## Tris, Room temp - Live == 0           -25.62      13.05  -1.963   0.3025  
-    ## Tris, Frozen -80 °C - Live == 0       -40.26      13.05  -3.084   0.0693 .
-    ## PBS, Room temp - Live == 0            -17.63      13.05  -1.351   0.6074  
+    ## 80% EtOH, Room temp - Live == 0       -50.90      13.05  -3.900   0.0243 *
+    ## 80% EtOH, Frozen -80 °C - Live == 0   -15.30      13.05  -1.172   0.7150  
+    ## Tris, Room temp - Live == 0           -25.62      13.05  -1.963   0.3022  
+    ## Tris, Frozen -80 °C - Live == 0       -40.26      13.05  -3.084   0.0688 .
+    ## PBS, Room temp - Live == 0            -17.63      13.05  -1.351   0.6076  
     ## PBS, Frozen -80 °C - Live == 0         58.56      13.05   4.486   0.0118 *
     ## ---
     ## Signif. codes:  0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1

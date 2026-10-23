@@ -1,8 +1,7 @@
-Alina’s alpha-glucosidase assays 08/17/2026: wild and colony larvae (USU
-reader)
+Alina’s alpha-glucosidase assays 08/14/2026
 ================
 Norah Saarman
-2026-10-22
+2026-10-23
 
 - [Overview](#overview)
 - [Plate map](#plate-map)
@@ -26,7 +25,7 @@ nm on the older plate reader at USU. That reader couldn’t run a kinetic
 protocol, so the plate was read twice by hand: once at the start (run 1)
 and once at 20 min (run 2). Each run is a separate .xls file.
 
-**Lsph feeding test.** Larvae were exposed to Lsph (VectoLex) at 0
+**Lsph exposure test.** Larvae were exposed to Lsph (VectoLex) at 0
 (control), 0.05, 5 or 500 ppm for 1.5-2 hours before the assay, 4 single
 larvae per group:
 
@@ -55,13 +54,13 @@ From Alina’s plate map. All other wells were empty.
 file_initial <- file.path(data_dir, "8-14-26 assay run 1.xls")   # t = 0
 file_final   <- file.path(data_dir, "8-14-26 assay run 2.xls")   # t = 20 min
 run_label    <- "2026-08-14"
-
+ 
 water_well <- "A1"   # H2O control
 cal_well   <- "A2"   # calibrator
-
+ 
 dose_order   <- c("0", "0.05", "5", "500")          # ppm Lsph
 colony_order <- c("Yellow", "Green")
-
+ 
 plate_map <- data.frame(
   well   = c(paste0("B", 1:8), paste0("C", 1:8), paste0("D", 1:8), paste0("E", 1:8),
              paste0("F", 1:4)),
@@ -75,12 +74,13 @@ plate_map$group <- ifelse(is.na(plate_map$dose), "SLCMAD (not exposed)",
 
 # Colors
 
-Same palette as the Lsph probit figures and the other plates.
+Presentation palette, matching the master summary and the Lsph probit
+figures (higher contrast; Yellow is a mustard gold).
 
 ``` r
-colony_colors <- c(Yellow = "#E6AB02",
-                   SLCMAD = "#0072B2",
-                   Green  = "#009E73")
+colony_colors <- c(Yellow = "#B8860B",
+                   SLCMAD = "#005A9C",
+                   Green  = "#007A55")
 ```
 
 # Data
@@ -99,11 +99,11 @@ read_plate <- function(file) {
   data.frame(well = paste0(rep(block[[1]], 12), rep(1:12, each = 8)),
              abs  = as.vector(absorbance))
 }
-
+ 
 initial <- read_plate(file_initial)
 final   <- read_plate(file_final)
 stopifnot(identical(initial$well, final$well))
-
+ 
 plates <- data.frame(well = initial$well,
                      A405_initial = initial$abs, A405_final = final$abs)
 ```
@@ -125,16 +125,16 @@ cat(sprintf("Calibrator (%s) at 20 min = %.4f\nWater (%s) at 20 min = %.4f\n",
 agc <- merge(plate_map, plates, by = "well", sort = FALSE)
 agc$activity_U_L <- (agc$A405_final - agc$A405_initial) / denom * 250 * agc$dilution
 agc$over_1       <- agc$A405_final > 1.0
-
+ 
 group_order <- c(paste("Yellow", dose_order, "ppm"), paste("Green", dose_order, "ppm"),
                  "SLCMAD (not exposed)")
 agc$group <- factor(agc$group, levels = group_order)
 agc <- agc[order(agc$group, agc$well), ]
-
+ 
 if (any(agc$over_1))
   warning("A405_final > 1.0 in wells: ", paste(agc$well[agc$over_1], collapse = ", "),
           " -- kit says dilute and repeat.")
-
+ 
 write.csv(agc, file.path(results_dir, paste0("agc_activity_", run_label, ".csv")),
           row.names = FALSE)
 kable(agc, digits = 3, row.names = FALSE)
@@ -189,7 +189,7 @@ agc_summary <- data.frame(
   sd_U_L   = as.numeric(tapply(agc$activity_U_L, agc$group, sd))
 )
 agc_summary$cv_pct <- 100 * agc_summary$sd_U_L / agc_summary$mean_U_L
-
+ 
 write.csv(agc_summary, file.path(results_dir, paste0("agc_summary_", run_label, ".csv")),
           row.names = FALSE)
 kable(agc_summary, digits = 1)
@@ -209,16 +209,15 @@ kable(agc_summary, digits = 1)
 
 # Boxplot
 
-Activity by Lsph dose, Yellow (susceptible) and Green (resistant) side
-by side at each dose, with unexposed SLCMAD at the right. Points are
-individual larvae.
+Activity by Lsph dose, Yellow and Green side by side at each dose, with
+unexposed SLCMAD at the right. Points are individual larvae.
 
 ``` r
 n_dose <- length(dose_order)
 at <- c(seq_len(n_dose) - 0.2, seq_len(n_dose) + 0.2, n_dose + 1.2)
 box_colony <- c(rep("Yellow", n_dose), rep("Green", n_dose), "SLCMAD")
 cols <- colony_colors[box_colony]
-
+ 
 par(mar = c(4.5, 4.8, 3, 1))
 boxplot(activity_U_L ~ group, data = agc, at = at, boxwex = 0.35,
         col    = adjustcolor(cols, alpha.f = 0.35),
@@ -228,7 +227,7 @@ boxplot(activity_U_L ~ group, data = agc, at = at, boxwex = 0.35,
         ylim = c(0, max(agc$activity_U_L) * 1.1),
         xlab = "Lsph exposure (ppm, 1.5-2 h)",
         ylab = expression(alpha*"-glucosidase activity (U/L)"),
-        main = expression(alpha*"-glucosidase activity after Lsph feeding (08/14/2026)"))
+        main = expression(alpha*"-glucosidase activity after Lsph exposure (08/14/2026)"))
 axis(1, at = c(seq_len(n_dose), n_dose + 1.2),
      labels = c(paste(dose_order), "SLCMAD\n(not exposed)"),
      tick = FALSE, padj = 0.5)
@@ -239,7 +238,7 @@ points(jitter(at[as.numeric(agc$group)], amount = 0.07), agc$activity_U_L,
        col = adjustcolor(colony_colors[agc$colony], alpha.f = 0.8))
 legend("topleft", bty = "n", cex = 0.85, pch = 15,
        col = colony_colors[c("Yellow", "Green")],
-       legend = c("Yellow (susceptible wild)", "Green (resistant colony)"))
+       legend = c("Yellow Colony (RR50 = 0.251)", "Green Colony (RR50 = 9,090)"))
 mtext("Single larvae, n = 4 per group", side = 3, line = 0.2, cex = 0.8, col = "grey40")
 ```
 
@@ -280,16 +279,16 @@ cat(sprintf("Largest change in any empty well between runs: %.3f\n",
 
 *Summary for Alina and the lab, written 10/22/2026.*
 
-- **Feeding effect.** Mean activity in the unexposed controls was Yellow
-  75 and Green 65 U/L. Exposed groups were somewhat lower (Yellow 63,
-  62, 45; Green 53, 60, 58 U/L at 0.05, 5 and 500 ppm), but there is no
-  clear dose-response, and the spread within groups is about as large as
-  the differences between them. This matches Alina’s reading of the
+- **Exposure effect.** Mean activity in the unexposed controls was
+  Yellow 75 and Green 65 U/L. Exposed groups were somewhat lower (Yellow
+  63, 62, 45; Green 53, 60, 58 U/L at 0.05, 5 and 500 ppm), but there is
+  no clear dose-response, and the spread within groups is about as large
+  as the differences between them. This matches Alina’s reading of the
   plate.
-- **Susceptible vs. resistant.** Yellow and Green controls are similar
-  here. Unexposed SLCMAD (105 U/L) is again higher than both, as on
-  every other plate.
-- **Short exposure.** 1.5-2 h of feeding is much shorter than the 24-48
+- **Yellow vs. Green.** Yellow and Green controls are similar here.
+  Unexposed SLCMAD (105 U/L) is again higher than both, as on every
+  other plate.
+- **Short exposure.** 1.5-2 h of exposure is much shorter than the 24-48
   h bioassays, so any effect on alpha-glucosidase may not have had time
   to show.
 - **Two manual reads.** As on 08/17, activity comes from two hand-timed

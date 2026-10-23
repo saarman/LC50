@@ -1,7 +1,7 @@
 Alina’s alpha-glucosidase assays 06/25/2026: SLCMAD vs. Green and White
 ================
 Norah Saarman
-2026-10-22
+2026-10-23
 
 - [Overview](#overview)
 - [Plate map](#plate-map)

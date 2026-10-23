@@ -97,7 +97,8 @@ All larvae are SLCMAD, so every box uses the SLCMAD color from the Lsph
 probit figures. The excluded well (B5) is an open circle.
 
 ```{r colors}
-slcmad_col <- "#0072B2"
+slcmad_col <- "#005A9C"   # deeper blue  (was #0072B2)
+
 ```
 
 # Data

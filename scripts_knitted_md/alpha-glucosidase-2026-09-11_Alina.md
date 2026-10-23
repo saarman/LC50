@@ -1,7 +1,7 @@
 Alina’s alpha-glucosidase assays 09/11/2026: pooling test (1x-5x larvae)
 ================
 Norah Saarman
-2026-10-22
+2026-10-23
 
 - [Overview](#overview)
 - [Plate map](#plate-map)
@@ -48,12 +48,12 @@ From Alina’s plate map. A3 was read but is unlabeled, so it is not used.
 ``` r
 infile    <- file.path(data_dir, "Kinetic Abs @ 405 2026-09-11 11-03-49.xlsx")
 run_label <- "09_11"
-
+ 
 water_well <- "A1"   # 220 µL water
 cal_well   <- "A2"   # 200 µL calibrator + 20 µL water
-
+ 
 group_order <- c("1x", "2x", "3x", "4x", "5x")
-
+ 
 plate_map <- data.frame(
   well     = c("B1","B2","B3", "C1","C2","C3", "D1","D2","D3",
                "E1","E2","E3", "F1","F2","F3"),
@@ -64,15 +64,15 @@ plate_map <- data.frame(
 
 # Colors
 
-Same palette as the Lsph probit figures (most susceptible to most
-resistant). This plate has no colony comparison, so the five colors are
-simply reused in order for 1x-5x.
+Presentation palette, matching the master summary and the Lsph probit
+figures (most susceptible to most resistant). This plate has no colony
+comparison, so every box is drawn in the SLCMAD blue.
 
 ``` r
-pal <- c("#E6AB02", "#0072B2", "#009E73", "#E66100", "#7B5EA7")
+pal <- c("#B8860B", "#005A9C", "#007A55", "#D04A00", "#5E3C99")
 names(pal) <- group_order
-#To draw every box in one colony's color instead, e.g. SLCMAD:
-pal[] <- "#0072B2"
+# Every box in one colony's color, SLCMAD:
+pal[] <- "#005A9C"
 ```
 
 # Data
@@ -87,7 +87,7 @@ raw <- as.data.frame(raw[!is.na(raw$abs), ])
 raw$well   <- gsub(" ", "", raw$well)          # "A 1" -> "A1"
 raw$time_s <- as.numeric(raw$time_s)
 raw <- raw[order(raw$well, raw$time_s), ]
-
+ 
 table(raw$well)                                # reads per well (expect 201)
 ```
 
@@ -100,7 +100,7 @@ table(raw$well)                                # reads per well (expect 201)
 ``` r
 first_abs <- tapply(raw$abs, raw$well, function(x) x[1])
 last_abs  <- tapply(raw$abs, raw$well, function(x) x[length(x)])
-
+ 
 water_20 <- last_abs[[water_well]]
 cal_20   <- last_abs[[cal_well]]
 denom    <- cal_20 - water_20
@@ -118,11 +118,11 @@ agc$A405_final   <- as.numeric(last_abs[agc$well])
 agc$activity_U_L <- (agc$A405_final - agc$A405_initial) / denom * 250 * agc$dilution
 agc$over_1       <- agc$A405_final > 1.0
 agc$group        <- factor(agc$group, levels = group_order)
-
+ 
 if (any(agc$over_1))
   warning("A405_final > 1.0 in wells: ", paste(agc$well[agc$over_1], collapse = ", "),
           " -- kit says dilute and repeat.")
-
+ 
 write.csv(agc, file.path(results_dir, paste0("agc_activity_", run_label, ".csv")),
           row.names = FALSE)
 kable(agc, digits = 3)
@@ -156,7 +156,7 @@ agc_summary <- data.frame(
   sd_U_L   = as.numeric(tapply(agc$activity_U_L, agc$group, sd))
 )
 agc_summary$cv_pct <- 100 * agc_summary$sd_U_L / agc_summary$mean_U_L
-
+ 
 write.csv(agc_summary, file.path(results_dir, paste0("agc_summary_", run_label, ".csv")),
           row.names = FALSE)
 kable(agc_summary, digits = 1)
