@@ -38,7 +38,8 @@ knitr::opts_chunk$set(
 )
 
 # ---- Simulation run settings ----
-QUICK <- FALSE   # TRUE = smoke test (10 + 10 replicates per scenario); FALSE = real run
+N_REP  <- 200   # replicates per scenario with the real effect
+N_NULL <- 200   # null replicates per scenario (sets that design's threshold)
 
 # Use the cores Slurm actually gave this RStudio session (detectCores() reports the whole node)
 N_CORES <- as.integer(Sys.getenv("SLURM_CPUS_ON_NODE", unset = "1"))
@@ -46,8 +47,9 @@ N_CORES <- as.integer(Sys.getenv("SLURM_CPUS_ON_NODE", unset = "1"))
 
 RStudio Configuration:
    - **R version:** R 4.4.0 (Geospatial packages)
-   - **Number of cores:** request 8-16 for the full run (QUICK = FALSE)
-   - **Memory:** 16-32 GB
+   - **Number of cores:** 16
+   - **Memory:** 32 GB
+   - **Time:** the full run takes a few hours at 0.25 cM windows
    - **Account:** saarman-np
    - **Partition:** saarman-np
 
@@ -62,7 +64,7 @@ RNGkind("L'Ecuyer-CMRG")   # reproducible random numbers across parallel workers
 set.seed(20261120)
 ```
 
-Cores available to this session: `r N_CORES`. Quick mode: `r QUICK`.
+Cores available to this session: `r N_CORES`.
 
 # 1. What this simulates
 
@@ -84,7 +86,7 @@ One replicate runs these steps:
    generation, so Ne is about 2R.
 3. **Bioassay at F8:** each assayed raft gives 50 larvae at the high (green)
    dose, 50 at the low (yellow) dose, plus untreated controls. Survival depends
-   on genotype at a major locus (and optionally a modifier).
+   on genotype at a major locus (cqm1), optionally plus extra loci on the logit scale.
 4. **Pools, as in the plan:** one larva per raft per phenotype.
    **GR** = survivors at the high dose, from the most resistant rafts.
    **YS** = dead at the low dose, from the most susceptible rafts.
@@ -106,7 +108,7 @@ base <- list(
   ## Genome (placeholders: set from a Culex linkage map)
   ## idCulPipi1.1 physical sizes: chr1 128.5, chr2 213.1, chr3 190.9 Mb (533 Mb total)
   chrom_cM  = c(chr1 = 30, chr2 = 89, chr3 = 66),  # published Cx. quinquefasciatus map (likely an underestimate)
-  marker_cM = 1,                                    # window spacing
+  marker_cM = 0.25,                                 # window spacing
 
   ## Genetic architecture (NOT controllable; explored as sensitivity)
   causal_chr   = "chr2", causal_cM = 25,   # cqm1 ~60.08 Mb of 213.1 Mb on chr2 (check assembly!)
@@ -114,8 +116,9 @@ base <- list(
   p_res_yellow = 0.0,                      # resistance-allele freq, yellow founders
   surv_high = c(SS = 0.00, RS = 0.05, RR = 0.90),  # survival at high dose (placeholder)
   surv_low  = c(SS = 0.05, RS = 0.50, RR = 1.00),  # survival at low dose  (placeholder)
-  mod_chr = "chr3", mod_cM = NA, mod_OR = 1,       # optional modifier (NA = none)
-  p_mod_green = 0.8, p_mod_yellow = 0.2,
+  ## Extra loci (modifiers or additional major loci): NULL = none, or a data.frame with
+  ## columns chr, cM, OR (odds ratio on survival per R allele), p_green, p_yellow
+  extra_loci = NULL,
   null_surv = 0.5,                                 # survival in null replicates
 
   ## Colony biology
@@ -142,7 +145,7 @@ base <- list(
   ## Cost (USD)
   genome_Mb = 533, cost_lib = 52, cost_per_M_pairs = 1.02, read_pair_bp = 300,
 
-  power_window_cM = 10  # a peak within ±10 cM of the true locus counts as a hit
+  power_window_cM = 10  # a peak within ±10 cM of a true locus counts as a hit
 )
 ```
 
@@ -150,8 +153,8 @@ base <- list(
 
 Genomes are stored as **founder-haplotype IDs** at each marker. A list holds one
 array per chromosome, with dimensions `[individual, haplotype 1 or 2, marker]`.
-Ancestry, and the alleles at the resistance and modifier loci, are looked up from
-the founder haplotype carrying that segment.
+Ancestry, and the alleles at the resistance loci, are looked up from the founder
+haplotype carrying that segment.
 
 `meiosis()` makes one gamete per entry of `parents`. It starts on a random
 parental haplotype and switches haplotype wherever a crossover falls between
@@ -183,6 +186,9 @@ This is the whole simulation, written as one linear script inside a function so
 it can be repeated. `keep = TRUE` also returns the per-window results for
 plotting.
 
+Survival on the logit scale is: survival of the cqm1 genotype (from `surv_high`
+or `surv_low`), plus `log(OR) × (number of R alleles)` at each extra locus.
+
 ```{r replicate}
 simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
 
@@ -194,8 +200,9 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
   chr_of <- rep(names(map), sapply(map, function(m) length(m$pos)))
   pos_of <- unlist(lapply(map, function(m) m$pos), use.names = FALSE)
   i_causal <- which.min(abs(map[[p$causal_chr]]$pos - p$causal_cM))
-  has_mod  <- !is.na(p$mod_cM) && p$mod_OR != 1
-  i_mod    <- if (has_mod) which.min(abs(map[[p$mod_chr]]$pos - p$mod_cM)) else NA
+  X   <- p$extra_loci                       # extra loci (NULL = none)
+  n_x <- if (is.null(X)) 0 else nrow(X)
+  i_x <- if (n_x > 0) sapply(1:n_x, function(x) which.min(abs(map[[X$chr[x]]]$pos - X$cM[x]))) else integer(0)
 
   ## ---- Step 1. P0 founders ------------------------------------------------
   ## individuals 1..n_cross are mothers, n_cross+1..2*n_cross are fathers;
@@ -206,7 +213,9 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
   n_ind <- 2 * n_cross
   hap_green <- rep(green_ind, each = 2)
   hap_res <- rbinom(2 * n_ind, 1, ifelse(hap_green == 1, p$p_res_green, p$p_res_yellow))
-  hap_mod <- rbinom(2 * n_ind, 1, ifelse(hap_green == 1, p$p_mod_green, p$p_mod_yellow))
+  ## R alleles at extra loci: one column per locus
+  hap_x <- if (n_x > 0) sapply(1:n_x, function(x)
+    rbinom(2 * n_ind, 1, ifelse(hap_green == 1, X$p_green[x], X$p_yellow[x]))) else NULL
 
   geno <- list()
   for (cc in names(map)) {
@@ -260,9 +269,14 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
   n_res <- hap_res[gm[[p$causal_chr]][, i_causal]] + hap_res[gf[[p$causal_chr]][, i_causal]]
   surv <- ifelse(type == "H", p$surv_high[n_res + 1],
           ifelse(type == "L", p$surv_low[n_res + 1], NA))
-  if (has_mod) {
-    n_mod <- hap_mod[gm[[p$mod_chr]][, i_mod]] + hap_mod[gf[[p$mod_chr]][, i_mod]]
-    surv <- plogis(qlogis(pmin(pmax(surv, 1e-6), 1 - 1e-6)) + log(p$mod_OR) * n_mod)
+  if (n_x > 0) {
+    lin <- qlogis(pmin(pmax(surv, 1e-6), 1 - 1e-6))
+    for (x in 1:n_x) {
+      cx <- X$chr[x]
+      n_rx <- hap_x[gm[[cx]][, i_x[x]], x] + hap_x[gf[[cx]][, i_x[x]], x]
+      lin <- lin + log(X$OR[x]) * n_rx
+    }
+    surv <- plogis(lin)
   }
   if (null) surv[type != "C"] <- p$null_surv
   alive <- runif(length(surv)) < surv
@@ -310,34 +324,36 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
   }
 
   ## ---- Step 6. Scan: Welch t-test between pool types, per window ------------
-  locus_chrs <- c(p$causal_chr, if (has_mod) p$mod_chr)
+  locus_chrs <- unique(c(p$causal_chr, X$chr))
   in_causal <- chr_of == p$causal_chr & abs(pos_of - p$causal_cM) <= p$power_window_cM
-  in_mod    <- if (has_mod) chr_of == p$mod_chr & abs(pos_of - p$mod_cM) <= p$power_window_cM else rep(FALSE, length(chr_of))
   neutral   <- !(chr_of %in% locus_chrs)
   on_cchr   <- chr_of == p$causal_chr
 
   out <- data.frame(null = null)
   mlp_all <- list()
   for (cn in c("GR_ctrl", "YS_ctrl", "GR_YS")) {
-    X <- est[[strsplit(cn, "_")[[1]][1]]]
-    Y <- est[[strsplit(cn, "_")[[1]][2]]]
-    if (is.null(X) || is.null(Y)) {
+    Xp <- est[[strsplit(cn, "_")[[1]][1]]]
+    Yp <- est[[strsplit(cn, "_")[[1]][2]]]
+    if (is.null(Xp) || is.null(Yp)) {
       mlp <- rep(NA_real_, length(chr_of))
     } else {
-      vx <- apply(X, 2, var) / nrow(X)
-      vy <- apply(Y, 2, var) / nrow(Y)
-      tt <- (colMeans(X) - colMeans(Y)) / pmax(sqrt(vx + vy), 1e-8)
-      df <- (vx + vy)^2 / (vx^2 / (nrow(X) - 1) + vy^2 / (nrow(Y) - 1))
-      df[!is.finite(df)] <- nrow(X) + nrow(Y) - 2
+      vx <- apply(Xp, 2, var) / nrow(Xp)
+      vy <- apply(Yp, 2, var) / nrow(Yp)
+      tt <- (colMeans(Xp) - colMeans(Yp)) / pmax(sqrt(vx + vy), 1e-8)
+      df <- (vx + vy)^2 / (vx^2 / (nrow(Xp) - 1) + vy^2 / (nrow(Yp) - 1))
+      df[!is.finite(df)] <- nrow(Xp) + nrow(Yp) - 2
       mlp <- -(log(2) + pt(-abs(tt), df, log.p = TRUE)) / log(10)   # -log10(p)
     }
     mlp_all[[cn]] <- mlp
     out[[paste0(cn, "_genome")]]  <- suppressWarnings(max(mlp, na.rm = TRUE))
     out[[paste0(cn, "_causal")]]  <- suppressWarnings(max(mlp[in_causal], na.rm = TRUE))
     out[[paste0(cn, "_neutral")]] <- suppressWarnings(max(mlp[neutral], na.rm = TRUE))
-    out[[paste0(cn, "_mod")]]     <- suppressWarnings(max(mlp[in_mod], na.rm = TRUE))
     out[[paste0(cn, "_peakdist")]] <- if (all(is.na(mlp))) NA else
       abs(pos_of[on_cchr][which.max(mlp[on_cchr])] - p$causal_cM)
+    for (x in seq_len(n_x)) {         # peak height in the window around each extra locus
+      in_x <- chr_of == X$chr[x] & abs(pos_of - X$cM[x]) <= p$power_window_cM
+      out[[paste0(cn, "_x", x)]] <- suppressWarnings(max(mlp[in_x], na.rm = TRUE))
+    }
   }
 
   ## diagnostics
@@ -366,7 +382,7 @@ knitr::kable(t(round(unlist(demo$summary[, c("delta_anc_GR_ctrl", "res_freq_fina
 
 par(mfrow = c(2, 1), mar = c(4, 4, 2, 1))
 x <- seq_along(demo$chr)
-plot(x, demo$mlp$GR_ctrl, col = as.integer(factor(demo$chr)), pch = 19, cex = 0.6,
+plot(x, demo$mlp$GR_ctrl, col = as.integer(factor(demo$chr)), pch = 19, cex = 0.4,
      xlab = "Window (chr1 | chr2 | chr3)", ylab = "-log10(p)", main = "GR vs Ctrl scan")
 abline(v = which(demo$chr == base$causal_chr & demo$pos == base$causal_cM), lty = 2)
 on2 <- demo$chr == base$causal_chr
@@ -379,7 +395,9 @@ abline(v = base$causal_cM, lty = 2)
 # 6. Scenarios
 
 We vary **one thing at a time** from the baseline. Blocks 1–7 are under our
-control; block 8 shows sensitivity to things we can't control.
+control; block 8 shows sensitivity to things we can't control. Blocks 1–8 have a
+single resistance locus (cqm1); block 9 adds a modifier of increasing strength on
+chr3.
 
 ```{r scenarios}
 scenarios <- list(
@@ -436,70 +454,105 @@ scenarios <- list(
   list(block = "8 Sensitivity", label = "RS survives 0.3",   changes = list(surv_high = c(SS = 0, RS = 0.3, RR = 0.9))),
   list(block = "8 Sensitivity", label = "poor AIMs",         changes = list(aim_eff = 1)),
   list(block = "8 Sensitivity", label = "males mate 2",      changes = list(father_ratio = 0.5)),
-  list(block = "8 Sensitivity", label = "unequal families",  changes = list(family_cv = 1)),
-  list(block = "8 Sensitivity", label = "modifier OR 2",     changes = list(mod_cM = 40, mod_OR = 2))
+  list(block = "8 Sensitivity", label = "unequal families",  changes = list(family_cv = 1))
 )
+
+## 9. Modifier on chr3 (40 cM), on top of cqm1: effect size x dose x founder differentiation.
+## OR = odds ratio on survival per modifier allele (OR 10 is close to a second major locus).
+## "lower" = a high dose at which cqm1 heterozygotes partly survive (placeholder values).
+## "founders 1/0" = best case: modifier fixed for different alleles in green and yellow.
+lower_dose <- c(SS = 0.02, RS = 0.40, RR = 0.95)
+for (founders in c("0.8/0.2", "1/0")) {
+  for (dose in c("current", "lower")) {
+    for (OR in c(3, 5, 10)) {
+      ch <- list(extra_loci = data.frame(chr = "chr3", cM = 40, OR = OR,
+                                         p_green  = if (founders == "1/0") 1 else 0.8,
+                                         p_yellow = if (founders == "1/0") 0 else 0.2))
+      if (dose == "lower") ch$surv_high <- lower_dose
+      scenarios[[length(scenarios) + 1]] <- list(
+        block = "9 Modifier", label = paste0("OR ", OR, " | ", dose, " dose | founders ", founders),
+        changes = ch)
+    }
+  }
+}
+
 length(scenarios)
 ```
 
 # 7. Run
 
-For each scenario: `n_rep` replicates with the real effect, plus `n_null` null
-replicates to set that design's threshold. With `QUICK <- FALSE` this takes a while.
-The chunk is cached, so knitting again only reruns it if this chunk, the
-parameters, the replicate function or the scenarios change.
+For each scenario: `N_REP` replicates with the real effect, plus `N_NULL` null
+replicates to set that design's threshold. This chunk is `eval = FALSE`: run it
+by hand when the simulation changes. It saves the results together with the
+parameters and code used, and the load chunk below warns if any of those have
+changed since.
 
 ```{r run, eval = FALSE}
-n_rep  <- if (QUICK) 10 else 200
-n_null <- if (QUICK) 10 else 200
-cores  <- if (.Platform$OS.type == "windows") 1 else N_CORES
+cores <- if (.Platform$OS.type == "windows") 1 else N_CORES
 
 t0 <- Sys.time()
 results <- list()
 for (s in scenarios) {
+  cat(format(Sys.time(), "%H:%M"), s$block, "|", s$label, "\n")
   p <- modifyList(base, s$changes)
-  reps <- mclapply(1:(n_rep + n_null), function(i)
-    tryCatch(simulate_replicate(p, null = i > n_rep), error = function(e) NULL),
+  reps <- mclapply(1:(N_REP + N_NULL), function(i)
+    tryCatch(simulate_replicate(p, null = i > N_REP),
+             error = function(e) conditionMessage(e)),
     mc.cores = cores, mc.set.seed = TRUE)
-  d <- do.call(rbind, reps)
+  failed <- !sapply(reps, is.data.frame)
+  if (any(failed)) cat("   ", sum(failed), "replicates failed, e.g.:", unlist(reps[failed])[1], "\n")
+  if (sum(!failed) < 10) { cat("    skipping scenario: too few successful replicates\n"); next }
+  d <- do.call(rbind, reps[!failed])
   alt <- d[!d$null, ]
   nul <- d[d$null, ]
+  n_x <- if (is.null(p$extra_loci)) 0 else nrow(p$extra_loci)
   pool_cost <- p$cost_lib + p$cost_per_M_pairs * p$cov_ind * p$N_per_pool * p$genome_Mb / p$read_pair_bp
   n_windows <- sum(p$chrom_cM / p$marker_cM + 1)
 
   for (cn in c("GR_ctrl", "YS_ctrl", "GR_YS")) {
     thr <- quantile(nul[[paste0(cn, "_genome")]], 0.95, na.rm = TRUE)
     hit <- alt[[paste0(cn, "_causal")]] > thr
+    ## extra loci: power for each, and power to detect ALL loci in the same experiment
+    hit_x <- lapply(seq_len(n_x), function(x) alt[[paste0(cn, "_x", x)]] > thr)
+    hit_all <- Reduce(`&`, c(list(hit), hit_x))
+    px <- sapply(1:2, function(x) if (x <= n_x) mean(hit_x[[x]], na.rm = TRUE) else NA)
+    sx <- sapply(1:2, function(x) if (x <= n_x) median(alt[[paste0(cn, "_x", x)]] / thr, na.rm = TRUE) else NA)
+
     results[[length(results) + 1]] <- data.frame(
       block = s$block, label = s$label, contrast = cn,
       power          = mean(hit, na.rm = TRUE),
+      signal         = median(alt[[paste0(cn, "_causal")]] / thr, na.rm = TRUE),  # peak / threshold
       threshold      = unname(thr),
       fpr_bonferroni = mean(nul[[paste0(cn, "_genome")]] > -log10(0.05 / n_windows), na.rm = TRUE),
-      power_modifier = mean(alt[[paste0(cn, "_mod")]] > thr, na.rm = TRUE),
+      power_x1 = px[1], power_x2 = px[2],
+      signal_x1 = sx[1], signal_x2 = sx[2],
+      power_all_loci = mean(hit_all, na.rm = TRUE),
       peak_dist_cM   = median(alt[[paste0(cn, "_peakdist")]][hit %in% TRUE], na.rm = TRUE),
       delta_anc      = mean(alt$delta_anc_GR_ctrl, na.rm = TRUE),
       res_freq_F8    = mean(alt$res_freq_final, na.rm = TRUE),
       drift_sd       = mean(alt$drift_sd, na.rm = TRUE),
       n_GR = mean(alt$n_GR), n_YS = mean(alt$n_YS), n_ctrl = mean(alt$n_ctrl),
+      n_need_GR = p$n_pools_GR * p$N_per_pool, n_need_YS = p$n_pools_YS * p$N_per_pool,
       ctrl_raft_reuse = any(d$ctrl_raft_reuse),
       seq_cost_usd   = round((p$n_pools_GR + p$n_pools_YS + p$n_pools_ctrl) * pool_cost),
       n_rep = nrow(alt), n_null = nrow(nul))
   }
+  ## save progress after every scenario, so a crash late in the run loses nothing
+  saveRDS(do.call(rbind, results), file.path(results_dir, "lsph_powersim_results_partial.rds"))
 }
 results <- do.call(rbind, results)
 Sys.time() - t0
-write.csv(results, file.path(results_dir, if (QUICK) "lsph_powersim_results_QUICK.csv" else "lsph_powersim_results.csv"),
-          row.names = FALSE)
 
-saveRDS(list(results   = results,
-             base      = base,
-             scenarios = scenarios,
-             sim_code  = deparse(simulate_replicate),
-             n_rep     = n_rep, n_null = n_null,
-             run_date  = Sys.time()),
+write.csv(results, file.path(results_dir, "lsph_powersim_results.csv"), row.names = FALSE)
+saveRDS(list(results      = results,
+             base         = base,
+             scenarios    = scenarios,
+             sim_code     = deparse(utils::removeSource(simulate_replicate)),
+             meiosis_code = deparse(utils::removeSource(meiosis)),
+             n_rep = N_REP, n_null = N_NULL,
+             run_date     = Sys.time()),
         file.path(results_dir, "lsph_powersim_run.rds"))
 ```
-
 
 # 8. Results
 
@@ -511,6 +564,8 @@ if (!identical(run$base, base))           warning("Baseline parameters changed s
 if (!identical(run$scenarios, scenarios)) warning("Scenarios changed since this run")
 if (!identical(run$sim_code, deparse(utils::removeSource(simulate_replicate))))
   warning("simulate_replicate() changed since this run")
+if (!identical(run$meiosis_code, deparse(utils::removeSource(meiosis))))
+  warning("meiosis() changed since this run")
 
 cat("Results from run on", format(run$run_date), "with", run$n_rep, "+", run$n_null,
     "replicates per scenario\n")
@@ -518,58 +573,33 @@ cat("Results from run on", format(run$run_date), "with", run$n_rep, "+", run$n_n
 
 **How to read these:**
 
-- `power`: probability of detecting the major locus at a 5% genome-wide false-positive rate.
-- `fpr_bonferroni`: how often a naive Bonferroni threshold gives a false peak (should be ≤ 0.05; larger means that test is anticonservative).
-- `n_GR`, `n_YS`: whether there were enough resistant or susceptible rafts to fill the pools.
-- `res_freq_F8`: resistance-allele frequency left after drift.
-- `peak_dist_cM`: how close the peak lands to the true locus.
+- `power`: probability of detecting cqm1 at a 5% genome-wide false-positive rate.
+- `signal`: median peak height at cqm1 divided by the threshold (1 = just significant). This separates designs even when power is 1.
+- `power_x1`, `signal_x1`: the same for the chr3 modifier (block 9).
+- `power_all_loci`: probability of detecting both cqm1 and the modifier in the same experiment.
+- `fpr_bonferroni`: how often a naive Bonferroni threshold gives a false peak (should be ≤ 0.05).
+- `n_GR` / `n_need_GR`: whether there were enough resistant rafts to fill the GR pools.
+- `peak_dist_cM`: how close the cqm1 peak lands to the true position.
 
-```{r results-plot, fig.height = 11}
-pd <- subset(results, contrast %in% c("GR_ctrl", "GR_YS"))
+## Signal strength at cqm1
+
+```{r results-signal, fig.height = 11}
+pd <- subset(results, contrast %in% c("GR_ctrl", "GR_YS") & block != "9 Modifier")
 pd$label <- factor(pd$label, levels = unique(results$label))
-ggplot(pd, aes(label, power, colour = contrast, group = contrast)) +
+ggplot(pd, aes(label, signal, colour = contrast, group = contrast)) +
+  geom_hline(yintercept = 1, linetype = 2, colour = "grey50") +
   geom_point(size = 2) + geom_line() +
   facet_wrap(~ block, scales = "free_x", ncol = 2) +
-  scale_y_continuous(limits = c(0, 1)) +
-  labs(x = NULL, y = "Power (5% genome-wide FPR)", colour = "Contrast") +
+  labs(x = NULL, y = "Peak / threshold at cqm1 (median)", colour = "Contrast") +
   theme_bw() + theme(axis.text.x = element_text(angle = 35, hjust = 1))
 ```
 
-```{r results-table}
-knitr::kable(subset(results, contrast == "GR_ctrl",
-                    select = c(block, label, power, fpr_bonferroni, peak_dist_cM,
-                               n_GR, n_YS, res_freq_F8, drift_sd, seq_cost_usd)),
-             digits = 2, row.names = FALSE)
-```
-
-# 9. Assumptions and not-yet-modelled
-
-- Chromosome map lengths, survival by genotype, and genome size are placeholders.
-- Ancestry inference is summarized by `aim_eff`: an ancestry window behaves as if
-  read from `cov_ind × N × aim_eff` independent fully informative reads.
-  `aim_eff = 1` means very poor ancestry-informative SNPs.
-- Not modelled yet: sex and the M locus on chr1 (sex-biased survival could make a
-  spurious chr1 peak), failed library preps, and larval mortality unrelated to
-  the larvicide.
-  
-# 10. Planned pool sizes:
-  
-```{r planned-pools}
-planned <- do.call(rbind, lapply(scenarios, function(s) {
-  p <- modifyList(base, s$changes)
-  data.frame(block = s$block, label = s$label,
-             n_need_GR = p$n_pools_GR * p$N_per_pool,
-             n_need_YS = p$n_pools_YS * p$N_per_pool)
-}))
-results2 <- merge(results, planned, by = c("block", "label"), sort = FALSE)
-```
-  
-# 11. Diagnostics figure (ancestry shift, localization, pool filling, cost):
+## Diagnostics: shift, localization, pool filling, cost
 
 ```{r results-diagnostics, fig.width = 13, fig.height = 11}
-dg <- subset(results2, contrast == "GR_ctrl")
+dg <- subset(results, contrast == "GR_ctrl" & block != "9 Modifier")
 scen <- paste0(sub("^[0-9]+ ", "", dg$block), ": ", dg$label)
-dg$scenario <- factor(scen, levels = rev(unique(paste0(sub("^[0-9]+ ", "", results$block), ": ", results$label))))
+dg$scenario <- factor(scen, levels = rev(unique(scen)))
 long <- rbind(
   data.frame(scenario = dg$scenario, block = dg$block,
              metric = "Ancestry shift at cqm1 (GR - Ctrl)", value = dg$delta_anc),
@@ -587,77 +617,49 @@ ggplot(long, aes(value, scenario, colour = block)) +
   theme_bw() + theme(legend.position = "none")
 ```
 
-# 12. Modifier × dose run (6 extra scenarios, cached separately). The lower-dose survival values are placeholders:
-
-```{r run-modifier, eval = FALSE}
-n_rep  <- if (QUICK) 10 else 200
-n_null <- if (QUICK) 10 else 200
-cores  <- if (.Platform$OS.type == "windows") 1 else N_CORES
-
-## a high dose at which heterozygotes partly survive (placeholder)
-lower_dose <- c(SS = 0.02, RS = 0.40, RR = 0.95)
-
-mod_scen <- expand.grid(OR = c(1.5, 2, 3), dose = c("current dose", "lower dose"),
-                        stringsAsFactors = FALSE)
-mod_results <- list()
-for (i in 1:nrow(mod_scen)) {
-  p <- modifyList(base, list(mod_cM = 40, mod_OR = mod_scen$OR[i]))
-  if (mod_scen$dose[i] == "lower dose") p$surv_high <- lower_dose
-  reps <- mclapply(1:(n_rep + n_null), function(j)
-    tryCatch(simulate_replicate(p, null = j > n_rep), error = function(e) NULL),
-    mc.cores = cores, mc.set.seed = TRUE)
-  d <- do.call(rbind, reps)
-  alt <- d[!d$null, ]
-  nul <- d[d$null, ]
-  for (cn in c("GR_ctrl", "YS_ctrl", "GR_YS")) {
-    thr <- quantile(nul[[paste0(cn, "_genome")]], 0.95, na.rm = TRUE)
-    mod_results[[length(mod_results) + 1]] <- data.frame(
-      OR = mod_scen$OR[i], dose = mod_scen$dose[i], contrast = cn,
-      power_major    = mean(alt[[paste0(cn, "_causal")]] > thr, na.rm = TRUE),
-      power_modifier = mean(alt[[paste0(cn, "_mod")]] > thr, na.rm = TRUE),
-      n_GR           = mean(alt$n_GR))
-  }
-}
-mod_results <- do.call(rbind, mod_results)
-write.csv(mod_results, file.path(results_dir,
-          if (QUICK) "lsph_powersim_modifier_QUICK.csv" else "lsph_powersim_modifier.csv"),
-          row.names = FALSE)
-
-saveRDS(list(mod_results  = mod_results,
-             base         = base,
-             lower_dose   = lower_dose,
-             mod_scen     = mod_scen,
-             sim_code     = deparse(utils::removeSource(simulate_replicate)),
-             meiosis_code = deparse(meiosis),
-             n_rep        = n_rep, n_null = n_null,
-             run_date     = Sys.time()),
-        file.path(results_dir, "lsph_powersim_modifier_run.rds"))
-```
-  
-# 13. Modifier power plot:  
-
-```{r load-modifier, warning = TRUE}
-mrun <- readRDS(file.path(results_dir, "lsph_powersim_modifier_run.rds"))
-mod_results <- mrun$mod_results
-
-if (!identical(mrun$base, base))
-  warning("Baseline parameters changed since the modifier run")
-if (!identical(mrun$sim_code, deparse(simulate_replicate)))
-  warning("simulate_replicate() changed since the modifier run")
-if (!identical(mrun$meiosis_code, deparse(meiosis)))
-  warning("meiosis() changed since the modifier run")
-
-cat("Modifier results from run on", format(mrun$run_date), "with",
-    mrun$n_rep, "+", mrun$n_null, "replicates per scenario\n")
-cat("Lower dose used:", paste(names(mrun$lower_dose), mrun$lower_dose, collapse = ", "), "\n")
+```{r results-table}
+knitr::kable(subset(results, contrast == "GR_ctrl" & block != "9 Modifier",
+                    select = c(block, label, power, signal, fpr_bonferroni, peak_dist_cM,
+                               n_GR, n_YS, res_freq_F8, drift_sd, seq_cost_usd)),
+             digits = 2, row.names = FALSE)
 ```
 
-```{r results-modifier, fig.height = 4}
-ggplot(mod_results, aes(factor(OR), power_modifier, colour = contrast, group = contrast)) +
+## Modifier (block 9)
+
+```{r results-modifier, fig.height = 6}
+pm <- subset(results, block == "9 Modifier")
+parts <- strsplit(pm$label, " | ", fixed = TRUE)
+pm$OR       <- factor(sapply(parts, `[`, 1), levels = c("OR 3", "OR 5", "OR 10"))
+pm$dose     <- sapply(parts, `[`, 2)
+pm$founders <- sapply(parts, `[`, 3)
+ggplot(pm, aes(OR, power_x1, colour = contrast, group = contrast)) +
   geom_point(size = 2) + geom_line() +
-  facet_wrap(~ dose) +
+  facet_grid(founders ~ dose) +
   scale_y_continuous(limits = c(0, 1)) +
   labs(x = "Modifier effect (odds ratio on survival per allele)",
        y = "Power for chr3 modifier (5% genome-wide FPR)", colour = "Contrast") +
   theme_bw()
 ```
+
+```{r results-modifier-table}
+knitr::kable(pm[, c("label", "contrast", "power", "power_x1", "power_all_loci",
+                    "signal", "signal_x1", "n_GR", "n_YS")],
+             digits = 2, row.names = FALSE)
+```
+
+# 9. Assumptions and not-yet-modelled
+
+- Genome size (533 Mb) and chromosome physical sizes are from the idCulPipi1.1 assembly.
+- Map lengths (30, 89, 66 cM) are from the published *Cx. quinquefasciatus* linkage map,
+  which is likely an underestimate; cqm1's position (25 cM) assumes even recombination along chr2.
+- Survival by genotype at each dose, and the "lower" high dose, are placeholders until the
+  F2 pilot bioassays.
+- F2 raft count (70) is a placeholder.
+- Ancestry inference is summarized by `aim_eff`: an ancestry window behaves as if
+  read from `cov_ind × N × aim_eff` independent fully informative reads.
+  `aim_eff = 1` means very poor ancestry-informative SNPs.
+- `delta_anc` is the true ancestry shift at cqm1 (before sequencing noise), so
+  depth and AIM quality do not change it; they act through `signal` and `power`.
+- Not modelled yet: sex and the M locus on chr1 (sex-biased survival could make a
+  spurious chr1 peak), failed library preps, and larval mortality unrelated to
+  the larvicide.
