@@ -54,3 +54,6 @@ figures/*.pdf
 
 # final figures in pdf
 figures/pdfs/*.pdf
+
+# rds results
+results/*.rds
