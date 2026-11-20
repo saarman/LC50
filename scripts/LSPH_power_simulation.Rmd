@@ -1,0 +1,663 @@
+---
+title: "LSPH admixture mapping: Power simulation"
+author: "Norah Saarman"
+date: "`r Sys.Date()`"
+output:
+  github_document:
+    toc: true
+knit: (function(input, ...) {
+    rmarkdown::render(
+      input,
+      output_dir = "../scripts_knitted_md",
+      envir = globalenv()
+    )
+  })
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+
+# Set to TRUE only when you want to (re)write the PDFs in ../figures/pdfs/
+save_pdfs <- TRUE
+
+# Figure filenames start with the Rmd's name
+fig_prefix <- sub("\\.Rmd$", "", knitr::current_input())
+
+# PDF device that writes straight into ../figures/pdfs/ (gitignored), same filename as the PNG
+pdf_to_folder <- function(file, width, height, ...) {
+  grDevices::pdf(file.path("../figures/pdfs", basename(file)),
+                 width = width, height = height, ...)
+}
+
+knitr::opts_chunk$set(
+  echo = TRUE, message = FALSE, warning = FALSE,
+  fig.width = 9, fig.height = 5,
+  fig.path = paste0("../figures/knitted_mds/", fig_prefix, "-"),
+  dev     = if (save_pdfs) c("png", "pdf_to_folder") else "png",
+  fig.ext = if (save_pdfs) c("png", "pdf")           else "png"
+)
+
+# ---- Simulation run settings ----
+QUICK <- FALSE   # TRUE = smoke test (10 + 10 replicates per scenario); FALSE = real run
+
+# Use the cores Slurm actually gave this RStudio session (detectCores() reports the whole node)
+N_CORES <- as.integer(Sys.getenv("SLURM_CPUS_ON_NODE", unset = "1"))
+```
+
+RStudio Configuration:
+   - **R version:** R 4.4.0 (Geospatial packages)
+   - **Number of cores:** request 8-16 for the full run (QUICK = FALSE)
+   - **Memory:** 16-32 GB
+   - **Account:** saarman-np
+   - **Partition:** saarman-np
+
+```{r libraries, message=FALSE, include = FALSE}
+library(parallel)
+library(ggplot2)
+
+results_dir <- "../results"
+dir.create(results_dir, showWarnings = FALSE)
+
+RNGkind("L'Ecuyer-CMRG")   # reproducible random numbers across parallel workers
+set.seed(20261120)
+```
+
+Cores available to this session: `r N_CORES`. Quick mode: `r QUICK`.
+
+# 1. What this simulates
+
+*Culex pipiens* green (resistant) × yellow (susceptible) colonies are intercrossed
+to F8, larvae are bioassayed with *L. sphaericus*, and pools of survivors,
+non-survivors and untreated sibling controls are sequenced. We ask: **how much
+power do we have to detect a resistance locus by comparing green ancestry between
+pools, and which of the things we control (egg rafts per generation, rafts
+assayed, pools, individuals per pool, depth, a second blood meal) buy the most
+power?**
+
+One replicate runs these steps:
+
+1. **Founders (P0):** 55 green-mother × yellow-father and 13 yellow-mother ×
+   green-father crosses. The colonies are outbred, so the resistance allele need
+   not be fixed in green.
+2. **Colony F2 to F8:** each generation is made of *R* egg rafts. Each raft is one
+   mother and one father, both drawn from random families of the previous
+   generation, so Ne is about 2R.
+3. **Bioassay at F8:** each assayed raft gives 50 larvae at the high (green)
+   dose, 50 at the low (yellow) dose, plus untreated controls. Survival depends
+   on genotype at a major locus (and optionally a modifier).
+4. **Pools, as in the plan:** one larva per raft per phenotype.
+   **GR** = survivors at the high dose, from the most resistant rafts.
+   **YS** = dead at the low dose, from the most susceptible rafts.
+   **Ctrl** = untreated sibs.
+5. **Sequencing:** each pool's green ancestry is the DNA-weighted mean of its 2N chromosomes, plus read-sampling error (depth × how informative the ancestry-informative SNPs are).
+6. **Scan:** a Welch t-test on pool-level ancestry, window by window, with replicate pools as the units.  
+
+Each design is also run with **null replicates**, where survival does not depend on genotype. The 95th percentile of the null genome-wide maximum −log10(p) is that design's threshold, so every power estimate is at a true 5% genome-wide false-positive rate.
+
+# 2. Baseline parameters
+
+The baseline is the current F8 plan. Values marked *placeholder* should be replaced with real numbers.
+
+```{r params-base}
+F2_RAFTS <- 70    # placeholder: number of egg rafts producing F2
+F8_RAFTS <- 300   # rafts produced at F8 (the assay rafts are drawn from these)
+
+base <- list(
+  ## Genome (placeholders: set from a Culex linkage map)
+  ## idCulPipi1.1 physical sizes: chr1 128.5, chr2 213.1, chr3 190.9 Mb (533 Mb total)
+  chrom_cM  = c(chr1 = 30, chr2 = 89, chr3 = 66),  # published Cx. quinquefasciatus map (likely an underestimate)
+  marker_cM = 1,                                    # window spacing
+
+  ## Genetic architecture (NOT controllable; explored as sensitivity)
+  causal_chr   = "chr2", causal_cM = 25,   # cqm1 ~60.08 Mb of 213.1 Mb on chr2 (check assembly!)
+  p_res_green  = 0.9,                      # resistance-allele freq, green founders
+  p_res_yellow = 0.0,                      # resistance-allele freq, yellow founders
+  surv_high = c(SS = 0.00, RS = 0.05, RR = 0.90),  # survival at high dose (placeholder)
+  surv_low  = c(SS = 0.05, RS = 0.50, RR = 1.00),  # survival at low dose  (placeholder)
+  mod_chr = "chr3", mod_cM = NA, mod_OR = 1,       # optional modifier (NA = none)
+  p_mod_green = 0.8, p_mod_yellow = 0.2,
+  null_surv = 0.5,                                 # survival in null replicates
+
+  ## Colony biology
+  family_cv    = 0,   # CV of family contribution to next generation (0 = Poisson)
+  father_ratio = 1,   # fathers per raft (0.5 = each male fathers 2 rafts on average)
+
+  ## Sequencing / inference
+  aim_eff = 10,       # effective no. of fully informative independent SNPs per window
+  dna_cv  = 0.2,      # CV of each individual's DNA contribution within a pool
+
+  ## Founding (fixed; already happened)
+  n_P0_green_mother = 55, n_P0_yellow_mother = 13,
+
+  ## DESIGN (controllable)
+  n_gen  = 8,
+  rafts  = c(F2_RAFTS, 80, 100, 120, 150, 175, F8_RAFTS),  # rafts producing F2..F8
+  n_assay_rafts = 200,  # F8 rafts bioassayed
+  f_hidden_sib  = 0,    # fraction of assay rafts that are 2nd-blood-meal full sibs
+  n_high = 50, n_low = 50,
+  N_per_pool = 20,
+  n_pools_GR = 5, n_pools_YS = 5, n_pools_ctrl = 10,
+  cov_ind = 5,          # sequencing depth per individual
+
+  ## Cost (USD)
+  genome_Mb = 533, cost_lib = 52, cost_per_M_pairs = 1.02, read_pair_bp = 300,
+
+  power_window_cM = 10  # a peak within ±10 cM of the true locus counts as a hit
+)
+```
+
+# 3. Meiosis
+
+Genomes are stored as **founder-haplotype IDs** at each marker. A list holds one
+array per chromosome, with dimensions `[individual, haplotype 1 or 2, marker]`.
+Ancestry, and the alleles at the resistance and modifier loci, are looked up from
+the founder haplotype carrying that segment.
+
+`meiosis()` makes one gamete per entry of `parents`. It starts on a random
+parental haplotype and switches haplotype wherever a crossover falls between
+adjacent markers (Haldane map function).
+
+```{r meiosis}
+meiosis <- function(geno, parents, map) {
+  ng <- length(parents)
+  gam <- list()
+  for (cc in names(geno)) {
+    r <- map[[cc]]$r
+    M <- length(r) + 1
+    origin <- matrix(0L, ng, M)                 # which parental haplotype (1 or 2)
+    origin[, 1] <- sample.int(2L, ng, replace = TRUE)
+    for (j in 2:M) {
+      crossover <- runif(ng) < r[j - 1]
+      origin[, j] <- ifelse(crossover, 3L - origin[, j - 1], origin[, j - 1])
+    }
+    idx <- cbind(rep(parents, times = M), as.vector(origin), rep(1:M, each = ng))
+    gam[[cc]] <- matrix(geno[[cc]][idx], ng, M)
+  }
+  gam
+}
+```
+
+# 4. One replicate
+
+This is the whole simulation, written as one linear script inside a function so
+it can be repeated. `keep = TRUE` also returns the per-window results for
+plotting.
+
+```{r replicate}
+simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
+
+  ## ---- Step 0. Genetic map ------------------------------------------------
+  map <- lapply(p$chrom_cM, function(L) {
+    pos <- seq(0, L, by = p$marker_cM)
+    list(pos = pos, r = 0.5 * (1 - exp(-2 * diff(pos) / 100)))
+  })
+  chr_of <- rep(names(map), sapply(map, function(m) length(m$pos)))
+  pos_of <- unlist(lapply(map, function(m) m$pos), use.names = FALSE)
+  i_causal <- which.min(abs(map[[p$causal_chr]]$pos - p$causal_cM))
+  has_mod  <- !is.na(p$mod_cM) && p$mod_OR != 1
+  i_mod    <- if (has_mod) which.min(abs(map[[p$mod_chr]]$pos - p$mod_cM)) else NA
+
+  ## ---- Step 1. P0 founders ------------------------------------------------
+  ## individuals 1..n_cross are mothers, n_cross+1..2*n_cross are fathers;
+  ## haplotype IDs 2i-1 and 2i belong to individual i
+  nG <- p$n_P0_green_mother; nY <- p$n_P0_yellow_mother
+  n_cross <- nG + nY
+  green_ind <- c(rep(1L, nG), rep(0L, nY), rep(0L, nG), rep(1L, nY))  # 1 = green
+  n_ind <- 2 * n_cross
+  hap_green <- rep(green_ind, each = 2)
+  hap_res <- rbinom(2 * n_ind, 1, ifelse(hap_green == 1, p$p_res_green, p$p_res_yellow))
+  hap_mod <- rbinom(2 * n_ind, 1, ifelse(hap_green == 1, p$p_mod_green, p$p_mod_yellow))
+
+  geno <- list()
+  for (cc in names(map)) {
+    a <- array(0L, c(n_ind, 2, length(map[[cc]]$pos)))
+    a[, 1, ] <- 2L * (1:n_ind) - 1L
+    a[, 2, ] <- 2L * (1:n_ind)
+    geno[[cc]] <- a
+  }
+  mom <- 1:n_cross                 # these rafts produce F1
+  dad <- n_cross + 1:n_cross
+
+  ## ---- Step 2. Colony, F2 ... F_n_gen ----------------------------------------
+  for (g in 2:p$n_gen) {
+    R_prev <- length(mom)
+    R_next <- p$rafts[g - 1]
+    ## family weights: equal (Poisson contributions) unless family_cv > 0
+    w <- if (p$family_cv > 0) rgamma(R_prev, 1 / p$family_cv^2, 1 / p$family_cv^2) else rep(1, R_prev)
+    n_fathers <- max(1, round(R_next * p$father_ratio))
+    fam <- c(sample.int(R_prev, R_next,    replace = TRUE, prob = w),  # new mothers' families
+             sample.int(R_prev, n_fathers, replace = TRUE, prob = w))  # new fathers' families
+    gm <- meiosis(geno, mom[fam], map)
+    gf <- meiosis(geno, dad[fam], map)
+    for (cc in names(map)) {
+      a <- array(0L, c(length(fam), 2, ncol(gm[[cc]])))
+      a[, 1, ] <- gm[[cc]]
+      a[, 2, ] <- gf[[cc]]
+      geno[[cc]] <- a
+    }
+    mom <- 1:R_next
+    dad <- R_next + (if (n_fathers >= R_next) sample.int(n_fathers, R_next)
+                     else sample.int(n_fathers, R_next, replace = TRUE))
+  }
+  ## now mom/dad are the parents of the R rafts producing F_n_gen
+
+  ## ---- Step 3. Bioassay ---------------------------------------------------
+  A <- p$n_assay_rafts
+  n_unique <- min(length(mom), round(A * (1 - p$f_hidden_sib)))
+  uni <- sample.int(length(mom), n_unique)
+  ## hidden full sibs = a second raft from the same mother (and father)
+  assay <- if (A > n_unique) c(uni, uni[sample.int(n_unique, A - n_unique, replace = TRUE)]) else uni
+
+  n_ctrl_need <- p$n_pools_ctrl * p$N_per_pool
+  n_c <- ceiling(n_ctrl_need / A)              # untreated larvae per raft that we use
+  n_per_raft <- p$n_high + p$n_low + n_c
+  raft_of <- rep(1:A, each = n_per_raft)
+  type <- rep(c(rep("H", p$n_high), rep("L", p$n_low), rep("C", n_c)), times = A)
+
+  gm <- meiosis(geno, mom[assay][raft_of], map)   # every larva's maternal gamete
+  gf <- meiosis(geno, dad[assay][raft_of], map)   # ... and paternal gamete
+
+  n_res <- hap_res[gm[[p$causal_chr]][, i_causal]] + hap_res[gf[[p$causal_chr]][, i_causal]]
+  surv <- ifelse(type == "H", p$surv_high[n_res + 1],
+          ifelse(type == "L", p$surv_low[n_res + 1], NA))
+  if (has_mod) {
+    n_mod <- hap_mod[gm[[p$mod_chr]][, i_mod]] + hap_mod[gf[[p$mod_chr]][, i_mod]]
+    surv <- plogis(qlogis(pmin(pmax(surv, 1e-6), 1 - 1e-6)) + log(p$mod_OR) * n_mod)
+  }
+  if (null) surv[type != "C"] <- p$null_surv
+  alive <- runif(length(surv)) < surv
+
+  isH <- type == "H"; isL <- type == "L"
+  survH <- as.numeric(tapply(alive[isH], raft_of[isH], mean))    # per raft
+  mortL <- as.numeric(tapply(!alive[isL], raft_of[isL], mean))
+
+  ## ---- Step 4. Choose larvae for pools (one per raft per phenotype) -------
+  pick <- list()
+  ## GR: a survivor from each of the most resistant rafts
+  cand <- which(survH > 0)
+  use  <- head(cand[order(-survH[cand], runif(length(cand)))], p$n_pools_GR * p$N_per_pool)
+  ok   <- which(isH & alive %in% TRUE)
+  pick$GR <- vapply(use, function(r) { v <- ok[raft_of[ok] == r]; v[sample.int(length(v), 1)] }, integer(1))
+  ## YS: a dead larva from each of the most susceptible rafts
+  cand <- which(mortL > 0)
+  use  <- head(cand[order(-mortL[cand], runif(length(cand)))], p$n_pools_YS * p$N_per_pool)
+  ok   <- which(isL & alive %in% FALSE)
+  pick$YS <- vapply(use, function(r) { v <- ok[raft_of[ok] == r]; v[sample.int(length(v), 1)] }, integer(1))
+  ## Ctrl: untreated sibs, one per raft (reuses rafts only if A < number needed)
+  C_by_raft <- matrix(which(type == "C"), nrow = n_c)    # column = raft
+  k <- 0:(n_ctrl_need - 1)
+  pick$ctrl <- C_by_raft[cbind(k %/% A + 1, sample.int(A)[k %% A + 1])]
+
+  ## ---- Step 5. Pool and "sequence" -------------------------------------------
+  n_pools <- c(GR = p$n_pools_GR, YS = p$n_pools_YS, ctrl = p$n_pools_ctrl)
+  dna_w <- if (p$dna_cv > 0) rgamma(length(raft_of), 1 / p$dna_cv^2, 1) else rep(1, length(raft_of))
+  est <- list()
+  for (ph in names(pick)) {
+    larv <- pick[[ph]]
+    k <- n_pools[[ph]]
+    if (length(larv) < 2 * k) next                       # too few larvae: pool missing
+    pool <- sample(rep(1:k, length.out = length(larv)))
+    ## green ancestry (0, 0.5, 1) of each larva at every window, all chromosomes
+    anc <- do.call(cbind, lapply(names(map), function(cc)
+      matrix(hap_green[gm[[cc]][larv, , drop = FALSE]] +
+             hap_green[gf[[cc]][larv, , drop = FALSE]], nrow = length(larv)) / 2))
+    est[[ph]] <- t(sapply(1:k, function(j) {
+      i <- which(pool == j)
+      true_freq <- colSums(anc[i, , drop = FALSE] * dna_w[larv[i]] / sum(dna_w[larv[i]]))
+      n_eff <- max(1, round(p$cov_ind * length(i) * p$aim_eff))   # effective reads per window
+      rbinom(length(true_freq), n_eff, pmin(pmax(true_freq, 0), 1)) / n_eff
+    }))
+  }
+
+  ## ---- Step 6. Scan: Welch t-test between pool types, per window ------------
+  locus_chrs <- c(p$causal_chr, if (has_mod) p$mod_chr)
+  in_causal <- chr_of == p$causal_chr & abs(pos_of - p$causal_cM) <= p$power_window_cM
+  in_mod    <- if (has_mod) chr_of == p$mod_chr & abs(pos_of - p$mod_cM) <= p$power_window_cM else rep(FALSE, length(chr_of))
+  neutral   <- !(chr_of %in% locus_chrs)
+  on_cchr   <- chr_of == p$causal_chr
+
+  out <- data.frame(null = null)
+  mlp_all <- list()
+  for (cn in c("GR_ctrl", "YS_ctrl", "GR_YS")) {
+    X <- est[[strsplit(cn, "_")[[1]][1]]]
+    Y <- est[[strsplit(cn, "_")[[1]][2]]]
+    if (is.null(X) || is.null(Y)) {
+      mlp <- rep(NA_real_, length(chr_of))
+    } else {
+      vx <- apply(X, 2, var) / nrow(X)
+      vy <- apply(Y, 2, var) / nrow(Y)
+      tt <- (colMeans(X) - colMeans(Y)) / pmax(sqrt(vx + vy), 1e-8)
+      df <- (vx + vy)^2 / (vx^2 / (nrow(X) - 1) + vy^2 / (nrow(Y) - 1))
+      df[!is.finite(df)] <- nrow(X) + nrow(Y) - 2
+      mlp <- -(log(2) + pt(-abs(tt), df, log.p = TRUE)) / log(10)   # -log10(p)
+    }
+    mlp_all[[cn]] <- mlp
+    out[[paste0(cn, "_genome")]]  <- suppressWarnings(max(mlp, na.rm = TRUE))
+    out[[paste0(cn, "_causal")]]  <- suppressWarnings(max(mlp[in_causal], na.rm = TRUE))
+    out[[paste0(cn, "_neutral")]] <- suppressWarnings(max(mlp[neutral], na.rm = TRUE))
+    out[[paste0(cn, "_mod")]]     <- suppressWarnings(max(mlp[in_mod], na.rm = TRUE))
+    out[[paste0(cn, "_peakdist")]] <- if (all(is.na(mlp))) NA else
+      abs(pos_of[on_cchr][which.max(mlp[on_cchr])] - p$causal_cM)
+  }
+
+  ## diagnostics
+  anc_at_locus <- function(larv) mean(hap_green[c(gm[[p$causal_chr]][larv, i_causal],
+                                                  gf[[p$causal_chr]][larv, i_causal])])
+  out$delta_anc_GR_ctrl <- anc_at_locus(pick$GR) - anc_at_locus(pick$ctrl)
+  out$res_freq_final <- mean(hap_res[geno[[p$causal_chr]][, , i_causal]])
+  out$drift_sd       <- if (!is.null(est$ctrl)) sd(colMeans(est$ctrl)) else NA
+  out$n_GR <- length(pick$GR); out$n_YS <- length(pick$YS); out$n_ctrl <- length(pick$ctrl)
+  out$ctrl_raft_reuse <- n_ctrl_need > A
+  for (v in names(out)) if (is.numeric(out[[v]]) && !is.finite(out[[v]])) out[[v]] <- NA
+
+  if (keep) return(list(summary = out, mlp = mlp_all, est = est, chr = chr_of, pos = pos_of))
+  out
+}
+```
+
+# 5. Look at one replicate
+
+Before running thousands of replicates, check that one looks sensible.
+
+```{r demo, fig.height = 7}
+demo <- simulate_replicate(base, keep = TRUE)
+knitr::kable(t(round(unlist(demo$summary[, c("delta_anc_GR_ctrl", "res_freq_final",
+              "drift_sd", "n_GR", "n_YS", "n_ctrl", "GR_ctrl_causal", "GR_ctrl_genome")]), 3)))
+
+par(mfrow = c(2, 1), mar = c(4, 4, 2, 1))
+x <- seq_along(demo$chr)
+plot(x, demo$mlp$GR_ctrl, col = as.integer(factor(demo$chr)), pch = 19, cex = 0.6,
+     xlab = "Window (chr1 | chr2 | chr3)", ylab = "-log10(p)", main = "GR vs Ctrl scan")
+abline(v = which(demo$chr == base$causal_chr & demo$pos == base$causal_cM), lty = 2)
+on2 <- demo$chr == base$causal_chr
+matplot(demo$pos[on2], t(rbind(demo$est$GR[, on2], demo$est$ctrl[, on2])), type = "l", lty = 1,
+        col = c(rep("darkgreen", nrow(demo$est$GR)), rep("grey50", nrow(demo$est$ctrl))),
+        xlab = "chr2 position (cM)", ylab = "Green ancestry", main = "Pools on chr2: GR (green) vs Ctrl (grey)")
+abline(v = base$causal_cM, lty = 2)
+```
+
+# 6. Scenarios
+
+We vary **one thing at a time** from the baseline. Blocks 1–7 are under our
+control; block 8 shows sensitivity to things we can't control.
+
+```{r scenarios}
+scenarios <- list(
+  ## 1. Rafts per generation F3-F7 (drift)
+  list(block = "1 Rafts/gen F3-F7", label = "slow 80->175",   changes = list()),
+  list(block = "1 Rafts/gen F3-F7", label = "quick 200->500", changes = list(rafts = c(F2_RAFTS, 200, 500, 500, 500, 500, F8_RAFTS))),
+  list(block = "1 Rafts/gen F3-F7", label = "quick, crash F5", changes = list(rafts = c(F2_RAFTS, 200, 500, 50, 200, 500, F8_RAFTS))),
+  list(block = "1 Rafts/gen F3-F7", label = "flat 50",  changes = list(rafts = c(F2_RAFTS, rep(50, 5),  F8_RAFTS))),
+  list(block = "1 Rafts/gen F3-F7", label = "flat 100", changes = list(rafts = c(F2_RAFTS, rep(100, 5), F8_RAFTS))),
+  list(block = "1 Rafts/gen F3-F7", label = "flat 200", changes = list(rafts = c(F2_RAFTS, rep(200, 5), F8_RAFTS))),
+  list(block = "1 Rafts/gen F3-F7", label = "flat 500", changes = list(rafts = c(F2_RAFTS, rep(500, 5), F8_RAFTS))),
+
+  ## 2. F8 rafts bioassayed (below 200, control pools must reuse rafts)
+  list(block = "2 F8 rafts assayed", label = "100", changes = list(n_assay_rafts = 100)),
+  list(block = "2 F8 rafts assayed", label = "150", changes = list(n_assay_rafts = 150)),
+  list(block = "2 F8 rafts assayed", label = "200", changes = list(n_assay_rafts = 200)),
+  list(block = "2 F8 rafts assayed", label = "300", changes = list(n_assay_rafts = 300)),
+
+  ## 3. Pools per phenotype (GR and YS; control pools stay at 10)
+  list(block = "3 Pools per phenotype", label = "3",  changes = list(n_pools_GR = 3,  n_pools_YS = 3)),
+  list(block = "3 Pools per phenotype", label = "5",  changes = list(n_pools_GR = 5,  n_pools_YS = 5)),
+  list(block = "3 Pools per phenotype", label = "8",  changes = list(n_pools_GR = 8,  n_pools_YS = 8)),
+  list(block = "3 Pools per phenotype", label = "10", changes = list(n_pools_GR = 10, n_pools_YS = 10)),
+
+  ## 4. Individuals per pool
+  list(block = "4 Individuals per pool", label = "10", changes = list(N_per_pool = 10)),
+  list(block = "4 Individuals per pool", label = "20", changes = list(N_per_pool = 20)),
+  list(block = "4 Individuals per pool", label = "30", changes = list(N_per_pool = 30)),
+  list(block = "4 Individuals per pool", label = "40", changes = list(N_per_pool = 40)),
+
+  ## 5. Sequencing depth per individual
+  list(block = "5 Depth per individual", label = "1x",  changes = list(cov_ind = 1)),
+  list(block = "5 Depth per individual", label = "2x",  changes = list(cov_ind = 2)),
+  list(block = "5 Depth per individual", label = "5x",  changes = list(cov_ind = 5)),
+  list(block = "5 Depth per individual", label = "10x", changes = list(cov_ind = 10)),
+
+  ## 6. Second blood meal at F7: is adding full-sib rafts worth it?
+  list(block = "6 Second blood meal", label = "150 rafts",            changes = list(n_assay_rafts = 150, f_hidden_sib = 0)),
+  list(block = "6 Second blood meal", label = "150 + 50 sib rafts",   changes = list(n_assay_rafts = 200, f_hidden_sib = 0.25)),
+  list(block = "6 Second blood meal", label = "150 + 150 sib rafts",  changes = list(n_assay_rafts = 300, f_hidden_sib = 0.5)),
+  list(block = "6 Second blood meal", label = "200 independent",      changes = list(n_assay_rafts = 200, f_hidden_sib = 0)),
+
+  ## 7. F2 pilot vs F8
+  list(block = "7 Generation", label = "F2 pilot 3/3/3",
+       changes = list(n_gen = 2, rafts = F2_RAFTS, n_assay_rafts = min(F2_RAFTS, 60),
+                      n_pools_GR = 3, n_pools_YS = 3, n_pools_ctrl = 3)),
+  list(block = "7 Generation", label = "F8 baseline", changes = list()),
+
+  ## 8. Sensitivity: things we don't control
+  list(block = "8 Sensitivity", label = "p_res green 0.5",   changes = list(p_res_green = 0.5)),
+  list(block = "8 Sensitivity", label = "p_res green 0.75",  changes = list(p_res_green = 0.75)),
+  list(block = "8 Sensitivity", label = "p_res green 1",     changes = list(p_res_green = 1)),
+  list(block = "8 Sensitivity", label = "p_res yellow 0.1",  changes = list(p_res_yellow = 0.1)),
+  list(block = "8 Sensitivity", label = "RS survives 0.3",   changes = list(surv_high = c(SS = 0, RS = 0.3, RR = 0.9))),
+  list(block = "8 Sensitivity", label = "poor AIMs",         changes = list(aim_eff = 1)),
+  list(block = "8 Sensitivity", label = "males mate 2",      changes = list(father_ratio = 0.5)),
+  list(block = "8 Sensitivity", label = "unequal families",  changes = list(family_cv = 1)),
+  list(block = "8 Sensitivity", label = "modifier OR 2",     changes = list(mod_cM = 40, mod_OR = 2))
+)
+length(scenarios)
+```
+
+# 7. Run
+
+For each scenario: `n_rep` replicates with the real effect, plus `n_null` null
+replicates to set that design's threshold. With `QUICK <- FALSE` this takes a while.
+The chunk is cached, so knitting again only reruns it if this chunk, the
+parameters, the replicate function or the scenarios change.
+
+```{r run, eval = FALSE}
+n_rep  <- if (QUICK) 10 else 200
+n_null <- if (QUICK) 10 else 200
+cores  <- if (.Platform$OS.type == "windows") 1 else N_CORES
+
+t0 <- Sys.time()
+results <- list()
+for (s in scenarios) {
+  p <- modifyList(base, s$changes)
+  reps <- mclapply(1:(n_rep + n_null), function(i)
+    tryCatch(simulate_replicate(p, null = i > n_rep), error = function(e) NULL),
+    mc.cores = cores, mc.set.seed = TRUE)
+  d <- do.call(rbind, reps)
+  alt <- d[!d$null, ]
+  nul <- d[d$null, ]
+  pool_cost <- p$cost_lib + p$cost_per_M_pairs * p$cov_ind * p$N_per_pool * p$genome_Mb / p$read_pair_bp
+  n_windows <- sum(p$chrom_cM / p$marker_cM + 1)
+
+  for (cn in c("GR_ctrl", "YS_ctrl", "GR_YS")) {
+    thr <- quantile(nul[[paste0(cn, "_genome")]], 0.95, na.rm = TRUE)
+    hit <- alt[[paste0(cn, "_causal")]] > thr
+    results[[length(results) + 1]] <- data.frame(
+      block = s$block, label = s$label, contrast = cn,
+      power          = mean(hit, na.rm = TRUE),
+      threshold      = unname(thr),
+      fpr_bonferroni = mean(nul[[paste0(cn, "_genome")]] > -log10(0.05 / n_windows), na.rm = TRUE),
+      power_modifier = mean(alt[[paste0(cn, "_mod")]] > thr, na.rm = TRUE),
+      peak_dist_cM   = median(alt[[paste0(cn, "_peakdist")]][hit %in% TRUE], na.rm = TRUE),
+      delta_anc      = mean(alt$delta_anc_GR_ctrl, na.rm = TRUE),
+      res_freq_F8    = mean(alt$res_freq_final, na.rm = TRUE),
+      drift_sd       = mean(alt$drift_sd, na.rm = TRUE),
+      n_GR = mean(alt$n_GR), n_YS = mean(alt$n_YS), n_ctrl = mean(alt$n_ctrl),
+      ctrl_raft_reuse = any(d$ctrl_raft_reuse),
+      seq_cost_usd   = round((p$n_pools_GR + p$n_pools_YS + p$n_pools_ctrl) * pool_cost),
+      n_rep = nrow(alt), n_null = nrow(nul))
+  }
+}
+results <- do.call(rbind, results)
+Sys.time() - t0
+write.csv(results, file.path(results_dir, if (QUICK) "lsph_powersim_results_QUICK.csv" else "lsph_powersim_results.csv"),
+          row.names = FALSE)
+
+saveRDS(list(results   = results,
+             base      = base,
+             scenarios = scenarios,
+             sim_code  = deparse(simulate_replicate),
+             n_rep     = n_rep, n_null = n_null,
+             run_date  = Sys.time()),
+        file.path(results_dir, "lsph_powersim_run.rds"))
+```
+
+
+# 8. Results
+
+```{r load-results, warning = TRUE}
+run <- readRDS(file.path(results_dir, "lsph_powersim_run.rds"))
+results <- run$results
+
+if (!identical(run$base, base))           warning("Baseline parameters changed since this run")
+if (!identical(run$scenarios, scenarios)) warning("Scenarios changed since this run")
+if (!identical(run$sim_code, deparse(utils::removeSource(simulate_replicate))))
+  warning("simulate_replicate() changed since this run")
+
+cat("Results from run on", format(run$run_date), "with", run$n_rep, "+", run$n_null,
+    "replicates per scenario\n")
+```
+
+**How to read these:**
+
+- `power`: probability of detecting the major locus at a 5% genome-wide false-positive rate.
+- `fpr_bonferroni`: how often a naive Bonferroni threshold gives a false peak (should be ≤ 0.05; larger means that test is anticonservative).
+- `n_GR`, `n_YS`: whether there were enough resistant or susceptible rafts to fill the pools.
+- `res_freq_F8`: resistance-allele frequency left after drift.
+- `peak_dist_cM`: how close the peak lands to the true locus.
+
+```{r results-plot, fig.height = 11}
+pd <- subset(results, contrast %in% c("GR_ctrl", "GR_YS"))
+pd$label <- factor(pd$label, levels = unique(results$label))
+ggplot(pd, aes(label, power, colour = contrast, group = contrast)) +
+  geom_point(size = 2) + geom_line() +
+  facet_wrap(~ block, scales = "free_x", ncol = 2) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(x = NULL, y = "Power (5% genome-wide FPR)", colour = "Contrast") +
+  theme_bw() + theme(axis.text.x = element_text(angle = 35, hjust = 1))
+```
+
+```{r results-table}
+knitr::kable(subset(results, contrast == "GR_ctrl",
+                    select = c(block, label, power, fpr_bonferroni, peak_dist_cM,
+                               n_GR, n_YS, res_freq_F8, drift_sd, seq_cost_usd)),
+             digits = 2, row.names = FALSE)
+```
+
+# 9. Assumptions and not-yet-modelled
+
+- Chromosome map lengths, survival by genotype, and genome size are placeholders.
+- Ancestry inference is summarized by `aim_eff`: an ancestry window behaves as if
+  read from `cov_ind × N × aim_eff` independent fully informative reads.
+  `aim_eff = 1` means very poor ancestry-informative SNPs.
+- Not modelled yet: sex and the M locus on chr1 (sex-biased survival could make a
+  spurious chr1 peak), failed library preps, and larval mortality unrelated to
+  the larvicide.
+  
+# 10. Planned pool sizes:
+  
+```{r planned-pools}
+planned <- do.call(rbind, lapply(scenarios, function(s) {
+  p <- modifyList(base, s$changes)
+  data.frame(block = s$block, label = s$label,
+             n_need_GR = p$n_pools_GR * p$N_per_pool,
+             n_need_YS = p$n_pools_YS * p$N_per_pool)
+}))
+results2 <- merge(results, planned, by = c("block", "label"), sort = FALSE)
+```
+  
+# 11. Diagnostics figure (ancestry shift, localization, pool filling, cost):
+
+```{r results-diagnostics, fig.width = 13, fig.height = 11}
+dg <- subset(results2, contrast == "GR_ctrl")
+scen <- paste0(sub("^[0-9]+ ", "", dg$block), ": ", dg$label)
+dg$scenario <- factor(scen, levels = rev(unique(paste0(sub("^[0-9]+ ", "", results$block), ": ", results$label))))
+long <- rbind(
+  data.frame(scenario = dg$scenario, block = dg$block,
+             metric = "Ancestry shift at cqm1 (GR - Ctrl)", value = dg$delta_anc),
+  data.frame(scenario = dg$scenario, block = dg$block,
+             metric = "Peak distance from cqm1 (cM)", value = dg$peak_dist_cM),
+  data.frame(scenario = dg$scenario, block = dg$block,
+             metric = "GR pools filled (% of planned)", value = 100 * dg$n_GR / dg$n_need_GR),
+  data.frame(scenario = dg$scenario, block = dg$block,
+             metric = "Sequencing cost ($k)", value = dg$seq_cost_usd / 1000))
+long$metric <- factor(long$metric, levels = unique(long$metric))
+ggplot(long, aes(value, scenario, colour = block)) +
+  geom_point(size = 2) +
+  facet_wrap(~ metric, nrow = 1, scales = "free_x") +
+  labs(x = NULL, y = NULL) +
+  theme_bw() + theme(legend.position = "none")
+```
+
+# 12. Modifier × dose run (6 extra scenarios, cached separately). The lower-dose survival values are placeholders:
+
+```{r run-modifier, eval = FALSE}
+n_rep  <- if (QUICK) 10 else 200
+n_null <- if (QUICK) 10 else 200
+cores  <- if (.Platform$OS.type == "windows") 1 else N_CORES
+
+## a high dose at which heterozygotes partly survive (placeholder)
+lower_dose <- c(SS = 0.02, RS = 0.40, RR = 0.95)
+
+mod_scen <- expand.grid(OR = c(1.5, 2, 3), dose = c("current dose", "lower dose"),
+                        stringsAsFactors = FALSE)
+mod_results <- list()
+for (i in 1:nrow(mod_scen)) {
+  p <- modifyList(base, list(mod_cM = 40, mod_OR = mod_scen$OR[i]))
+  if (mod_scen$dose[i] == "lower dose") p$surv_high <- lower_dose
+  reps <- mclapply(1:(n_rep + n_null), function(j)
+    tryCatch(simulate_replicate(p, null = j > n_rep), error = function(e) NULL),
+    mc.cores = cores, mc.set.seed = TRUE)
+  d <- do.call(rbind, reps)
+  alt <- d[!d$null, ]
+  nul <- d[d$null, ]
+  for (cn in c("GR_ctrl", "YS_ctrl", "GR_YS")) {
+    thr <- quantile(nul[[paste0(cn, "_genome")]], 0.95, na.rm = TRUE)
+    mod_results[[length(mod_results) + 1]] <- data.frame(
+      OR = mod_scen$OR[i], dose = mod_scen$dose[i], contrast = cn,
+      power_major    = mean(alt[[paste0(cn, "_causal")]] > thr, na.rm = TRUE),
+      power_modifier = mean(alt[[paste0(cn, "_mod")]] > thr, na.rm = TRUE),
+      n_GR           = mean(alt$n_GR))
+  }
+}
+mod_results <- do.call(rbind, mod_results)
+write.csv(mod_results, file.path(results_dir,
+          if (QUICK) "lsph_powersim_modifier_QUICK.csv" else "lsph_powersim_modifier.csv"),
+          row.names = FALSE)
+
+saveRDS(list(mod_results  = mod_results,
+             base         = base,
+             lower_dose   = lower_dose,
+             mod_scen     = mod_scen,
+             sim_code     = deparse(utils::removeSource(simulate_replicate)),
+             meiosis_code = deparse(meiosis),
+             n_rep        = n_rep, n_null = n_null,
+             run_date     = Sys.time()),
+        file.path(results_dir, "lsph_powersim_modifier_run.rds"))
+```
+  
+# 13. Modifier power plot:  
+
+```{r load-modifier, warning = TRUE}
+mrun <- readRDS(file.path(results_dir, "lsph_powersim_modifier_run.rds"))
+mod_results <- mrun$mod_results
+
+if (!identical(mrun$base, base))
+  warning("Baseline parameters changed since the modifier run")
+if (!identical(mrun$sim_code, deparse(simulate_replicate)))
+  warning("simulate_replicate() changed since the modifier run")
+if (!identical(mrun$meiosis_code, deparse(meiosis)))
+  warning("meiosis() changed since the modifier run")
+
+cat("Modifier results from run on", format(mrun$run_date), "with",
+    mrun$n_rep, "+", mrun$n_null, "replicates per scenario\n")
+cat("Lower dose used:", paste(names(mrun$lower_dose), mrun$lower_dose, collapse = ", "), "\n")
+```
+
+```{r results-modifier, fig.height = 4}
+ggplot(mod_results, aes(factor(OR), power_modifier, colour = contrast, group = contrast)) +
+  geom_point(size = 2) + geom_line() +
+  facet_wrap(~ dose) +
+  scale_y_continuous(limits = c(0, 1)) +
+  labs(x = "Modifier effect (odds ratio on survival per allele)",
+       y = "Power for chr3 modifier (5% genome-wide FPR)", colour = "Contrast") +
+  theme_bw()
+```

@@ -1,0 +1,19 @@
+"OR","dose","contrast","power_major","power_modifier","n_GR"
+1.5,"current dose","GR_ctrl",1,0,100
+1.5,"current dose","YS_ctrl",0.98,0.02,100
+1.5,"current dose","GR_YS",1,0.01,100
+2,"current dose","GR_ctrl",1,0.01,100
+2,"current dose","YS_ctrl",0.99,0.015,100
+2,"current dose","GR_YS",1,0.015,100
+3,"current dose","GR_ctrl",1,0.025,100
+3,"current dose","YS_ctrl",0.975,0.06,100
+3,"current dose","GR_YS",1,0.1,100
+1.5,"lower dose","GR_ctrl",0.995,0.005,100
+1.5,"lower dose","YS_ctrl",0.965,0,100
+1.5,"lower dose","GR_YS",1,0.055,100
+2,"lower dose","GR_ctrl",0.995,0.02,100
+2,"lower dose","YS_ctrl",0.995,0.04,100
+2,"lower dose","GR_YS",1,0.035,100
+3,"lower dose","GR_ctrl",0.985,0.035,100
+3,"lower dose","YS_ctrl",0.96,0.04,100
+3,"lower dose","GR_YS",1,0.1,100
