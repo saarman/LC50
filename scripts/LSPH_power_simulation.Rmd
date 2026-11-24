@@ -60,6 +60,11 @@ library(ggplot2)
 results_dir <- "../results"
 dir.create(results_dir, showWarnings = FALSE)
 
+## Colour palette: muted red, green, teal, purple
+pal <- c(red = "#D4776F", green = "#7FAB52", teal = "#5EB1B2", purple = "#8E77A3")   # sampled from Macdonald et al. 2022, Fig. 2
+contrast_cols <- c(GR_YS = pal[["purple"]], GR_pair = pal[["teal"]],
+                   GRsib_YSsib = pal[["green"]], GR_ctrl = pal[["red"]])
+
 RNGkind("L'Ecuyer-CMRG")   # reproducible random numbers across parallel workers
 set.seed(20261120)
 ```
@@ -86,13 +91,18 @@ One replicate runs these steps:
    generation, so Ne is about 2R.
 3. **Bioassay at F8:** each assayed raft gives 50 larvae at the high (green)
    dose, 50 at the low (yellow) dose, plus untreated controls. Survival depends
-   on genotype at a major locus (cqm1), optionally plus extra loci on the logit scale.
+   on genotype at a hypothetical major-effect locus (MAL), optionally plus extra loci on
+   the logit scale. Whether such a locus exists is what the study tests.
 4. **Pools, as in the plan:** one larva per raft per phenotype.
    **GR** = survivors at the high dose, from the most resistant rafts.
    **YS** = dead at the low dose, from the most susceptible rafts.
-   **Ctrl** = untreated sibs.
+   **Paired controls** = for every GR and YS pool, a control pool of untreated
+   sibs from exactly the same rafts.
 5. **Sequencing:** each pool's green ancestry is the DNA-weighted mean of its 2N chromosomes, plus read-sampling error (depth × how informative the ancestry-informative SNPs are).
-6. **Scan:** a Welch t-test on pool-level ancestry, window by window, with replicate pools as the units.  
+6. **Scan:** pool-level ancestry compared window by window, with replicate pools as the units.
+   GR vs YS (Welch t) is the discovery scan. GR and YS vs their paired sib pools (paired t)
+   test selection *within* families, which family structure cannot explain. Sibs of GR rafts
+   vs sibs of YS rafts (Welch t) test selection *between* families.  
 
 Each design is also run with **null replicates**, where survival does not depend on genotype. The 95th percentile of the null genome-wide maximum −log10(p) is that design's threshold, so every power estimate is at a true 5% genome-wide false-positive rate.
 
@@ -111,7 +121,7 @@ base <- list(
   marker_cM = 0.25,                                 # window spacing
 
   ## Genetic architecture (NOT controllable; explored as sensitivity)
-  causal_chr   = "chr2", causal_cM = 25,   # cqm1 ~60.08 Mb of 213.1 Mb on chr2 (check assembly!)
+  causal_chr   = "chr2", causal_cM = 25,   # MAL: ~60.1 Mb of 213.1 Mb on chr2, assuming even recombination
   p_res_green  = 0.9,                      # resistance-allele freq, green founders
   p_res_yellow = 0.0,                      # resistance-allele freq, yellow founders
   surv_high = c(SS = 0.00, RS = 0.05, RR = 0.90),  # survival at high dose (placeholder)
@@ -139,7 +149,7 @@ base <- list(
   f_hidden_sib  = 0,    # fraction of assay rafts that are 2nd-blood-meal full sibs
   n_high = 50, n_low = 50,
   N_per_pool = 20,
-  n_pools_GR = 5, n_pools_YS = 5, n_pools_ctrl = 10,
+  n_pools_GR = 5, n_pools_YS = 5,   # each GR and YS pool has a paired control pool of untreated sibs
   cov_ind = 5,          # sequencing depth per individual
 
   ## Cost (USD)
@@ -186,7 +196,7 @@ This is the whole simulation, written as one linear script inside a function so
 it can be repeated. `keep = TRUE` also returns the per-window results for
 plotting.
 
-Survival on the logit scale is: survival of the cqm1 genotype (from `surv_high`
+Survival on the logit scale is: survival of the MAL genotype (from `surv_high`
 or `surv_low`), plus `log(OR) × (number of R alleles)` at each extra locus.
 
 ```{r replicate}
@@ -257,8 +267,7 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
   ## hidden full sibs = a second raft from the same mother (and father)
   assay <- if (A > n_unique) c(uni, uni[sample.int(n_unique, A - n_unique, replace = TRUE)]) else uni
 
-  n_ctrl_need <- p$n_pools_ctrl * p$N_per_pool
-  n_c <- ceiling(n_ctrl_need / A)              # untreated larvae per raft that we use
+  n_c <- 2                                     # untreated sibs per raft (a raft can feed both GR and YS)
   n_per_raft <- p$n_high + p$n_low + n_c
   raft_of <- rep(1:A, each = n_per_raft)
   type <- rep(c(rep("H", p$n_high), rep("L", p$n_low), rep("C", n_c)), times = A)
@@ -289,28 +298,35 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
   pick <- list()
   ## GR: a survivor from each of the most resistant rafts
   cand <- which(survH > 0)
-  use  <- head(cand[order(-survH[cand], runif(length(cand)))], p$n_pools_GR * p$N_per_pool)
+  use_GR <- head(cand[order(-survH[cand], runif(length(cand)))], p$n_pools_GR * p$N_per_pool)
   ok   <- which(isH & alive %in% TRUE)
-  pick$GR <- vapply(use, function(r) { v <- ok[raft_of[ok] == r]; v[sample.int(length(v), 1)] }, integer(1))
+  pick$GR <- vapply(use_GR, function(r) { v <- ok[raft_of[ok] == r]; v[sample.int(length(v), 1)] }, integer(1))
   ## YS: a dead larva from each of the most susceptible rafts
   cand <- which(mortL > 0)
-  use  <- head(cand[order(-mortL[cand], runif(length(cand)))], p$n_pools_YS * p$N_per_pool)
+  use_YS <- head(cand[order(-mortL[cand], runif(length(cand)))], p$n_pools_YS * p$N_per_pool)
   ok   <- which(isL & alive %in% FALSE)
-  pick$YS <- vapply(use, function(r) { v <- ok[raft_of[ok] == r]; v[sample.int(length(v), 1)] }, integer(1))
-  ## Ctrl: untreated sibs, one per raft (reuses rafts only if A < number needed)
+  pick$YS <- vapply(use_YS, function(r) { v <- ok[raft_of[ok] == r]; v[sample.int(length(v), 1)] }, integer(1))
+  ## Paired controls: an untreated sib from the same raft as each GR and each YS larva
+  ## (row 1 of C_by_raft for GR sibs, row 2 for YS sibs, so a raft in both gives two sibs)
   C_by_raft <- matrix(which(type == "C"), nrow = n_c)    # column = raft
-  k <- 0:(n_ctrl_need - 1)
-  pick$ctrl <- C_by_raft[cbind(k %/% A + 1, sample.int(A)[k %% A + 1])]
+  pick$ctrlGR <- C_by_raft[1, use_GR]
+  pick$ctrlYS <- C_by_raft[2, use_YS]
+
+  ## Pool labels: each paired control pool holds the sibs of the matching treatment pool
+  pool_of <- list(GR = sample(rep(1:p$n_pools_GR, length.out = length(pick$GR))),
+                  YS = sample(rep(1:p$n_pools_YS, length.out = length(pick$YS))))
+  pool_of$ctrlGR <- pool_of$GR
+  pool_of$ctrlYS <- pool_of$YS
 
   ## ---- Step 5. Pool and "sequence" -------------------------------------------
-  n_pools <- c(GR = p$n_pools_GR, YS = p$n_pools_YS, ctrl = p$n_pools_ctrl)
+  n_pools <- c(GR = p$n_pools_GR, YS = p$n_pools_YS, ctrlGR = p$n_pools_GR, ctrlYS = p$n_pools_YS)
   dna_w <- if (p$dna_cv > 0) rgamma(length(raft_of), 1 / p$dna_cv^2, 1) else rep(1, length(raft_of))
   est <- list()
   for (ph in names(pick)) {
     larv <- pick[[ph]]
     k <- n_pools[[ph]]
     if (length(larv) < 2 * k) next                       # too few larvae: pool missing
-    pool <- sample(rep(1:k, length.out = length(larv)))
+    pool <- pool_of[[ph]]
     ## green ancestry (0, 0.5, 1) of each larva at every window, all chromosomes
     anc <- do.call(cbind, lapply(names(map), function(cc)
       matrix(hap_green[gm[[cc]][larv, , drop = FALSE]] +
@@ -322,6 +338,8 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
       rbinom(length(true_freq), n_eff, pmin(pmax(true_freq, 0), 1)) / n_eff
     }))
   }
+  ## all control pools combined (for comparisons against a family-balanced baseline)
+  if (!is.null(est$ctrlGR) && !is.null(est$ctrlYS)) est$ctrl <- rbind(est$ctrlGR, est$ctrlYS)
 
   ## ---- Step 6. Scan: Welch t-test between pool types, per window ------------
   locus_chrs <- unique(c(p$causal_chr, X$chr))
@@ -331,11 +349,25 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
 
   out <- data.frame(null = null)
   mlp_all <- list()
-  for (cn in c("GR_ctrl", "YS_ctrl", "GR_YS")) {
-    Xp <- est[[strsplit(cn, "_")[[1]][1]]]
-    Yp <- est[[strsplit(cn, "_")[[1]][2]]]
-    if (is.null(Xp) || is.null(Yp)) {
+  ## Contrasts: pool type 1, pool type 2, test
+  ##   GR_YS        survivors (high dose) vs dead (low dose)            Welch
+  ##   GR_pair      GR vs untreated sibs from the same rafts, by pool    paired t (within families)
+  ##   YS_pair      YS vs untreated sibs from the same rafts, by pool    paired t (within families)
+  ##   GRsib_YSsib  sibs of GR rafts vs sibs of YS rafts                 Welch (between families)
+  ##   GR_ctrl      GR vs all control pools combined                    Welch
+  ##   YS_ctrl      YS vs all control pools combined                    Welch
+  contrasts <- list(GR_YS = c("GR", "YS", "welch"),     GR_pair = c("GR", "ctrlGR", "paired"),
+                    YS_pair = c("YS", "ctrlYS", "paired"), GRsib_YSsib = c("ctrlGR", "ctrlYS", "welch"),
+                    GR_ctrl = c("GR", "ctrl", "welch"),    YS_ctrl = c("YS", "ctrl", "welch"))
+  for (cn in names(contrasts)) {
+    Xp <- est[[contrasts[[cn]][1]]]
+    Yp <- est[[contrasts[[cn]][2]]]
+    if (is.null(Xp) || is.null(Yp) || nrow(Xp) < 2 || nrow(Yp) < 2) {
       mlp <- rep(NA_real_, length(chr_of))
+    } else if (contrasts[[cn]][3] == "paired") {
+      dd <- Xp - Yp                                    # pool j minus its paired control pool j
+      tt <- colMeans(dd) / pmax(apply(dd, 2, sd) / sqrt(nrow(dd)), 1e-8)
+      mlp <- -(log(2) + pt(-abs(tt), nrow(dd) - 1, log.p = TRUE)) / log(10)
     } else {
       vx <- apply(Xp, 2, var) / nrow(Xp)
       vy <- apply(Yp, 2, var) / nrow(Yp)
@@ -359,11 +391,11 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
   ## diagnostics
   anc_at_locus <- function(larv) mean(hap_green[c(gm[[p$causal_chr]][larv, i_causal],
                                                   gf[[p$causal_chr]][larv, i_causal])])
-  out$delta_anc_GR_ctrl <- anc_at_locus(pick$GR) - anc_at_locus(pick$ctrl)
+  out$delta_anc_GR_ctrl <- anc_at_locus(pick$GR) - anc_at_locus(c(pick$ctrlGR, pick$ctrlYS))
+  out$delta_anc_GR_pair <- anc_at_locus(pick$GR) - anc_at_locus(pick$ctrlGR)
   out$res_freq_final <- mean(hap_res[geno[[p$causal_chr]][, , i_causal]])
   out$drift_sd       <- if (!is.null(est$ctrl)) sd(colMeans(est$ctrl)) else NA
-  out$n_GR <- length(pick$GR); out$n_YS <- length(pick$YS); out$n_ctrl <- length(pick$ctrl)
-  out$ctrl_raft_reuse <- n_ctrl_need > A
+  out$n_GR <- length(pick$GR); out$n_YS <- length(pick$YS); out$n_ctrl <- length(pick$ctrlGR) + length(pick$ctrlYS)
   for (v in names(out)) if (is.numeric(out[[v]]) && !is.finite(out[[v]])) out[[v]] <- NA
 
   if (keep) return(list(summary = out, mlp = mlp_all, est = est, chr = chr_of, pos = pos_of))
@@ -382,84 +414,84 @@ knitr::kable(t(round(unlist(demo$summary[, c("delta_anc_GR_ctrl", "res_freq_fina
 
 par(mfrow = c(2, 1), mar = c(4, 4, 2, 1))
 x <- seq_along(demo$chr)
-plot(x, demo$mlp$GR_ctrl, col = as.integer(factor(demo$chr)), pch = 19, cex = 0.4,
+plot(x, demo$mlp$GR_ctrl, col = pal[c("red", "teal", "purple")][as.integer(factor(demo$chr))], pch = 19, cex = 0.4,
      xlab = "Window (chr1 | chr2 | chr3)", ylab = "-log10(p)", main = "GR vs Ctrl scan")
 abline(v = which(demo$chr == base$causal_chr & demo$pos == base$causal_cM), lty = 2)
 on2 <- demo$chr == base$causal_chr
 matplot(demo$pos[on2], t(rbind(demo$est$GR[, on2], demo$est$ctrl[, on2])), type = "l", lty = 1,
-        col = c(rep("darkgreen", nrow(demo$est$GR)), rep("grey50", nrow(demo$est$ctrl))),
+        col = c(rep(pal[["green"]], nrow(demo$est$GR)), rep("grey50", nrow(demo$est$ctrl))),
         xlab = "chr2 position (cM)", ylab = "Green ancestry", main = "Pools on chr2: GR (green) vs Ctrl (grey)")
 abline(v = base$causal_cM, lty = 2)
 ```
 
 # 6. Scenarios
 
-We vary **one thing at a time** from the baseline. Blocks 1–7 are under our
-control; block 8 shows sensitivity to things we can't control. Blocks 1–8 have a
-single resistance locus (cqm1); block 9 adds a modifier of increasing strength on
-chr3.
+We vary **one thing at a time** from the baseline. Panels A–G are under our
+control; panel H shows sensitivity to things we can't control. Panels A–H have a
+single resistance locus (the MAL); panel I adds a modifier of increasing strength
+on chr3.
 
 ```{r scenarios}
 scenarios <- list(
-  ## 1. Rafts per generation F3-F7 (drift)
-  list(block = "1 Rafts/gen F3-F7", label = "slow 80->175",   changes = list()),
-  list(block = "1 Rafts/gen F3-F7", label = "quick 200->500", changes = list(rafts = c(F2_RAFTS, 200, 500, 500, 500, 500, F8_RAFTS))),
-  list(block = "1 Rafts/gen F3-F7", label = "quick, crash F5", changes = list(rafts = c(F2_RAFTS, 200, 500, 50, 200, 500, F8_RAFTS))),
-  list(block = "1 Rafts/gen F3-F7", label = "flat 50",  changes = list(rafts = c(F2_RAFTS, rep(50, 5),  F8_RAFTS))),
-  list(block = "1 Rafts/gen F3-F7", label = "flat 100", changes = list(rafts = c(F2_RAFTS, rep(100, 5), F8_RAFTS))),
-  list(block = "1 Rafts/gen F3-F7", label = "flat 200", changes = list(rafts = c(F2_RAFTS, rep(200, 5), F8_RAFTS))),
-  list(block = "1 Rafts/gen F3-F7", label = "flat 500", changes = list(rafts = c(F2_RAFTS, rep(500, 5), F8_RAFTS))),
+  ## A. Rafts per generation F3-F7 (drift)
+  list(block = "A. Rafts per generation (F3-F7)", label = "slow 80->175",   changes = list()),
+  list(block = "A. Rafts per generation (F3-F7)", label = "quick 200->500", changes = list(rafts = c(F2_RAFTS, 200, 500, 500, 500, 500, F8_RAFTS))),
+  list(block = "A. Rafts per generation (F3-F7)", label = "quick, crash F5", changes = list(rafts = c(F2_RAFTS, 200, 500, 50, 200, 500, F8_RAFTS))),
+  list(block = "A. Rafts per generation (F3-F7)", label = "flat 50",  changes = list(rafts = c(F2_RAFTS, rep(50, 5),  F8_RAFTS))),
+  list(block = "A. Rafts per generation (F3-F7)", label = "flat 100", changes = list(rafts = c(F2_RAFTS, rep(100, 5), F8_RAFTS))),
+  list(block = "A. Rafts per generation (F3-F7)", label = "flat 200", changes = list(rafts = c(F2_RAFTS, rep(200, 5), F8_RAFTS))),
+  list(block = "A. Rafts per generation (F3-F7)", label = "flat 500", changes = list(rafts = c(F2_RAFTS, rep(500, 5), F8_RAFTS))),
 
-  ## 2. F8 rafts bioassayed (below 200, control pools must reuse rafts)
-  list(block = "2 F8 rafts assayed", label = "100", changes = list(n_assay_rafts = 100)),
-  list(block = "2 F8 rafts assayed", label = "150", changes = list(n_assay_rafts = 150)),
-  list(block = "2 F8 rafts assayed", label = "200", changes = list(n_assay_rafts = 200)),
-  list(block = "2 F8 rafts assayed", label = "300", changes = list(n_assay_rafts = 300)),
+  ## B. F8 rafts bioassayed
+  list(block = "B. F8 rafts assayed", label = "100", changes = list(n_assay_rafts = 100)),
+  list(block = "B. F8 rafts assayed", label = "150", changes = list(n_assay_rafts = 150)),
+  list(block = "B. F8 rafts assayed", label = "200", changes = list(n_assay_rafts = 200)),
+  list(block = "B. F8 rafts assayed", label = "300", changes = list(n_assay_rafts = 300)),
 
-  ## 3. Pools per phenotype (GR and YS; control pools stay at 10)
-  list(block = "3 Pools per phenotype", label = "3",  changes = list(n_pools_GR = 3,  n_pools_YS = 3)),
-  list(block = "3 Pools per phenotype", label = "5",  changes = list(n_pools_GR = 5,  n_pools_YS = 5)),
-  list(block = "3 Pools per phenotype", label = "8",  changes = list(n_pools_GR = 8,  n_pools_YS = 8)),
-  list(block = "3 Pools per phenotype", label = "10", changes = list(n_pools_GR = 10, n_pools_YS = 10)),
+  ## C. Pools per phenotype (each with a paired control pool)
+  list(block = "C. Pools per phenotype", label = "3",  changes = list(n_pools_GR = 3,  n_pools_YS = 3)),
+  list(block = "C. Pools per phenotype", label = "5",  changes = list(n_pools_GR = 5,  n_pools_YS = 5)),
+  list(block = "C. Pools per phenotype", label = "8",  changes = list(n_pools_GR = 8,  n_pools_YS = 8)),
+  list(block = "C. Pools per phenotype", label = "10", changes = list(n_pools_GR = 10, n_pools_YS = 10)),
 
-  ## 4. Individuals per pool
-  list(block = "4 Individuals per pool", label = "10", changes = list(N_per_pool = 10)),
-  list(block = "4 Individuals per pool", label = "20", changes = list(N_per_pool = 20)),
-  list(block = "4 Individuals per pool", label = "30", changes = list(N_per_pool = 30)),
-  list(block = "4 Individuals per pool", label = "40", changes = list(N_per_pool = 40)),
+  ## D. Individuals per pool
+  list(block = "D. Individuals per pool", label = "10", changes = list(N_per_pool = 10)),
+  list(block = "D. Individuals per pool", label = "20", changes = list(N_per_pool = 20)),
+  list(block = "D. Individuals per pool", label = "30", changes = list(N_per_pool = 30)),
+  list(block = "D. Individuals per pool", label = "40", changes = list(N_per_pool = 40)),
 
-  ## 5. Sequencing depth per individual
-  list(block = "5 Depth per individual", label = "1x",  changes = list(cov_ind = 1)),
-  list(block = "5 Depth per individual", label = "2x",  changes = list(cov_ind = 2)),
-  list(block = "5 Depth per individual", label = "5x",  changes = list(cov_ind = 5)),
-  list(block = "5 Depth per individual", label = "10x", changes = list(cov_ind = 10)),
+  ## E. Sequencing depth per individual
+  list(block = "E. Sequencing depth per individual", label = "1x",  changes = list(cov_ind = 1)),
+  list(block = "E. Sequencing depth per individual", label = "2x",  changes = list(cov_ind = 2)),
+  list(block = "E. Sequencing depth per individual", label = "5x",  changes = list(cov_ind = 5)),
+  list(block = "E. Sequencing depth per individual", label = "10x", changes = list(cov_ind = 10)),
 
-  ## 6. Second blood meal at F7: is adding full-sib rafts worth it?
-  list(block = "6 Second blood meal", label = "150 rafts",            changes = list(n_assay_rafts = 150, f_hidden_sib = 0)),
-  list(block = "6 Second blood meal", label = "150 + 50 sib rafts",   changes = list(n_assay_rafts = 200, f_hidden_sib = 0.25)),
-  list(block = "6 Second blood meal", label = "150 + 150 sib rafts",  changes = list(n_assay_rafts = 300, f_hidden_sib = 0.5)),
-  list(block = "6 Second blood meal", label = "200 independent",      changes = list(n_assay_rafts = 200, f_hidden_sib = 0)),
+  ## F. Second blood meal at F7: is adding full-sib rafts worth it?
+  list(block = "F. Second blood meal", label = "150 rafts",            changes = list(n_assay_rafts = 150, f_hidden_sib = 0)),
+  list(block = "F. Second blood meal", label = "150 + 50 sib rafts",   changes = list(n_assay_rafts = 200, f_hidden_sib = 0.25)),
+  list(block = "F. Second blood meal", label = "150 + 150 sib rafts",  changes = list(n_assay_rafts = 300, f_hidden_sib = 0.5)),
+  list(block = "F. Second blood meal", label = "200 independent",      changes = list(n_assay_rafts = 200, f_hidden_sib = 0)),
 
-  ## 7. F2 pilot vs F8
-  list(block = "7 Generation", label = "F2 pilot 3/3/3",
+  ## G. F2 pilot vs F8
+  list(block = "G. F2 pilot vs F8", label = "F2 pilot 3+3 pools",
        changes = list(n_gen = 2, rafts = F2_RAFTS, n_assay_rafts = min(F2_RAFTS, 60),
-                      n_pools_GR = 3, n_pools_YS = 3, n_pools_ctrl = 3)),
-  list(block = "7 Generation", label = "F8 baseline", changes = list()),
+                      n_pools_GR = 3, n_pools_YS = 3)),
+  list(block = "G. F2 pilot vs F8", label = "F8 baseline", changes = list()),
 
-  ## 8. Sensitivity: things we don't control
-  list(block = "8 Sensitivity", label = "p_res green 0.5",   changes = list(p_res_green = 0.5)),
-  list(block = "8 Sensitivity", label = "p_res green 0.75",  changes = list(p_res_green = 0.75)),
-  list(block = "8 Sensitivity", label = "p_res green 1",     changes = list(p_res_green = 1)),
-  list(block = "8 Sensitivity", label = "p_res yellow 0.1",  changes = list(p_res_yellow = 0.1)),
-  list(block = "8 Sensitivity", label = "RS survives 0.3",   changes = list(surv_high = c(SS = 0, RS = 0.3, RR = 0.9))),
-  list(block = "8 Sensitivity", label = "poor AIMs",         changes = list(aim_eff = 1)),
-  list(block = "8 Sensitivity", label = "males mate 2",      changes = list(father_ratio = 0.5)),
-  list(block = "8 Sensitivity", label = "unequal families",  changes = list(family_cv = 1))
+  ## H. Sensitivity: things we don't control
+  list(block = "H. Sensitivity", label = "p_res green 0.5",   changes = list(p_res_green = 0.5)),
+  list(block = "H. Sensitivity", label = "p_res green 0.75",  changes = list(p_res_green = 0.75)),
+  list(block = "H. Sensitivity", label = "p_res green 1",     changes = list(p_res_green = 1)),
+  list(block = "H. Sensitivity", label = "p_res yellow 0.1",  changes = list(p_res_yellow = 0.1)),
+  list(block = "H. Sensitivity", label = "RS survives 0.3",   changes = list(surv_high = c(SS = 0, RS = 0.3, RR = 0.9))),
+  list(block = "H. Sensitivity", label = "poor AIMs",         changes = list(aim_eff = 1)),
+  list(block = "H. Sensitivity", label = "males mate 2",      changes = list(father_ratio = 0.5)),
+  list(block = "H. Sensitivity", label = "unequal families",  changes = list(family_cv = 1))
 )
 
-## 9. Modifier on chr3 (40 cM), on top of cqm1: effect size x dose x founder differentiation.
+## I. Modifier on chr3 (40 cM), on top of the MAL: effect size x dose x founder differentiation.
 ## OR = odds ratio on survival per modifier allele (OR 10 is close to a second major locus).
-## "lower" = a high dose at which cqm1 heterozygotes partly survive (placeholder values).
+## "lower" = a high dose at which MAL heterozygotes partly survive (placeholder values).
 ## "founders 1/0" = best case: modifier fixed for different alleles in green and yellow.
 lower_dose <- c(SS = 0.02, RS = 0.40, RR = 0.95)
 for (founders in c("0.8/0.2", "1/0")) {
@@ -470,7 +502,7 @@ for (founders in c("0.8/0.2", "1/0")) {
                                          p_yellow = if (founders == "1/0") 0 else 0.2))
       if (dose == "lower") ch$surv_high <- lower_dose
       scenarios[[length(scenarios) + 1]] <- list(
-        block = "9 Modifier", label = paste0("OR ", OR, " | ", dose, " dose | founders ", founders),
+        block = "I. Modifier", label = paste0("OR ", OR, " | ", dose, " dose | founders ", founders),
         changes = ch)
     }
   }
@@ -506,10 +538,11 @@ for (s in scenarios) {
   alt <- d[!d$null, ]
   nul <- d[d$null, ]
   n_x <- if (is.null(p$extra_loci)) 0 else nrow(p$extra_loci)
+  n_pools_ctrl <- p$n_pools_GR + p$n_pools_YS      # one paired control pool per treatment pool
   pool_cost <- p$cost_lib + p$cost_per_M_pairs * p$cov_ind * p$N_per_pool * p$genome_Mb / p$read_pair_bp
   n_windows <- sum(p$chrom_cM / p$marker_cM + 1)
 
-  for (cn in c("GR_ctrl", "YS_ctrl", "GR_YS")) {
+  for (cn in c("GR_YS", "GR_pair", "YS_pair", "GRsib_YSsib", "GR_ctrl", "YS_ctrl")) {
     thr <- quantile(nul[[paste0(cn, "_genome")]], 0.95, na.rm = TRUE)
     hit <- alt[[paste0(cn, "_causal")]] > thr
     ## extra loci: power for each, and power to detect ALL loci in the same experiment
@@ -529,12 +562,13 @@ for (s in scenarios) {
       power_all_loci = mean(hit_all, na.rm = TRUE),
       peak_dist_cM   = median(alt[[paste0(cn, "_peakdist")]][hit %in% TRUE], na.rm = TRUE),
       delta_anc      = mean(alt$delta_anc_GR_ctrl, na.rm = TRUE),
+      delta_anc_pair = mean(alt$delta_anc_GR_pair, na.rm = TRUE),
       res_freq_F8    = mean(alt$res_freq_final, na.rm = TRUE),
       drift_sd       = mean(alt$drift_sd, na.rm = TRUE),
       n_GR = mean(alt$n_GR), n_YS = mean(alt$n_YS), n_ctrl = mean(alt$n_ctrl),
       n_need_GR = p$n_pools_GR * p$N_per_pool, n_need_YS = p$n_pools_YS * p$N_per_pool,
-      ctrl_raft_reuse = any(d$ctrl_raft_reuse),
-      seq_cost_usd   = round((p$n_pools_GR + p$n_pools_YS + p$n_pools_ctrl) * pool_cost),
+      n_need_ctrl = n_pools_ctrl * p$N_per_pool,
+      seq_cost_usd   = round((p$n_pools_GR + p$n_pools_YS + n_pools_ctrl) * pool_cost),
       n_rep = nrow(alt), n_null = nrow(nul))
   }
   ## save progress after every scenario, so a crash late in the run loses nothing
@@ -573,71 +607,89 @@ cat("Results from run on", format(run$run_date), "with", run$n_rep, "+", run$n_n
 
 **How to read these:**
 
-- `power`: probability of detecting cqm1 at a 5% genome-wide false-positive rate.
-- `signal`: median peak height at cqm1 divided by the threshold (1 = just significant). This separates designs even when power is 1.
-- `power_x1`, `signal_x1`: the same for the chr3 modifier (block 9).
-- `power_all_loci`: probability of detecting both cqm1 and the modifier in the same experiment.
+Contrasts (each has its own design-specific threshold):
+
+- `GR_YS`: survivors at the high dose vs dead at the low dose. Discovery scan.
+- `GR_pair` / `YS_pair`: treatment pools vs their paired pools of untreated sibs (paired t). Selection within families; immune to family structure.
+- `GRsib_YSsib`: untreated sibs of GR rafts vs untreated sibs of YS rafts. Selection between families.
+- `GR_ctrl` / `YS_ctrl`: treatment pools vs all control pools combined.
+
+Columns:
+
+- `power`: probability of detecting the MAL at a 5% genome-wide false-positive rate.
+- `signal`: how far the MAL peak rises above the significance threshold, as a multiple of it (median of 200 replicates). 1 = just significant; 2 = a peak with twice the threshold's −log10(p). This separates designs even when power is 1.
+- `power_x1`, `signal_x1`: the same for the chr3 modifier (panel I).
+- `power_all_loci`: probability of detecting both the MAL and the modifier in the same experiment.
 - `fpr_bonferroni`: how often a naive Bonferroni threshold gives a false peak (should be ≤ 0.05).
 - `n_GR` / `n_need_GR`: whether there were enough resistant rafts to fill the GR pools.
-- `peak_dist_cM`: how close the cqm1 peak lands to the true position.
+- `peak_dist_cM`: how close the MAL peak lands to the true position.
+- `delta_anc` / `delta_anc_pair`: true green-ancestry difference at the MAL, GR minus all controls / GR minus its paired sibs.
 
-## Signal strength at cqm1
+## Signal at the MAL
 
 ```{r results-signal, fig.height = 11}
-pd <- subset(results, contrast %in% c("GR_ctrl", "GR_YS") & block != "9 Modifier")
+main_contrasts <- c("GR_YS", "GR_pair", "GRsib_YSsib", "GR_ctrl")
+pd <- subset(results, contrast %in% main_contrasts & block != "I. Modifier")
+pd$contrast <- factor(pd$contrast, levels = main_contrasts)
 pd$label <- factor(pd$label, levels = unique(results$label))
-ggplot(pd, aes(label, signal, colour = contrast, group = contrast)) +
+ggplot(pd, aes(label, signal, colour = contrast, fill = contrast, group = contrast)) +
   geom_hline(yintercept = 1, linetype = 2, colour = "grey50") +
-  geom_point(size = 2) + geom_line() +
-  facet_wrap(~ block, scales = "free_x", ncol = 2) +
-  labs(x = NULL, y = "Peak / threshold at cqm1 (median)", colour = "Contrast") +
+  geom_line() + geom_point(shape = 21, colour = "black", size = 2.5) +
+  annotate("text", x = 0.6, y = 1, label = "threshold", hjust = 0, vjust = -0.5,
+           size = 3, colour = "grey40") +   # after the data layers, so the x axis stays discrete
+  scale_colour_manual(values = contrast_cols) + scale_fill_manual(values = contrast_cols) +
+  facet_wrap(~ block, scales = "free_x", ncol = 2, axes = "all_y") +   # y axis on every panel
+  labs(x = NULL, y = "Peak −log10(p) / threshold −log10(p)", colour = "Contrast", fill = "Contrast") +
   theme_bw() + theme(axis.text.x = element_text(angle = 35, hjust = 1))
 ```
 
 ## Diagnostics: shift, localization, pool filling, cost
 
 ```{r results-diagnostics, fig.width = 13, fig.height = 11}
-dg <- subset(results, contrast == "GR_ctrl" & block != "9 Modifier")
-scen <- paste0(sub("^[0-9]+ ", "", dg$block), ": ", dg$label)
+dg <- subset(results, contrast == "GR_ctrl" & block != "I. Modifier")
+scen <- paste0(sub("^[A-Z]\\. ", "", dg$block), ": ", dg$label)
 dg$scenario <- factor(scen, levels = rev(unique(scen)))
 long <- rbind(
   data.frame(scenario = dg$scenario, block = dg$block,
-             metric = "Ancestry shift at cqm1 (GR - Ctrl)", value = dg$delta_anc),
+             metric = "Ancestry shift at MAL (GR - Ctrl)", value = dg$delta_anc),
   data.frame(scenario = dg$scenario, block = dg$block,
-             metric = "Peak distance from cqm1 (cM)", value = dg$peak_dist_cM),
+             metric = "Peak distance from MAL (cM)", value = dg$peak_dist_cM),
   data.frame(scenario = dg$scenario, block = dg$block,
              metric = "GR pools filled (% of planned)", value = 100 * dg$n_GR / dg$n_need_GR),
   data.frame(scenario = dg$scenario, block = dg$block,
              metric = "Sequencing cost ($k)", value = dg$seq_cost_usd / 1000))
 long$metric <- factor(long$metric, levels = unique(long$metric))
-ggplot(long, aes(value, scenario, colour = block)) +
-  geom_point(size = 2) +
+block_cols <- setNames(rep(unname(pal), length.out = length(unique(dg$block))), unique(dg$block))
+ggplot(long, aes(value, scenario, fill = block)) +
+  geom_point(shape = 21, colour = "black", size = 2.5) +
+  scale_fill_manual(values = block_cols) +
   facet_wrap(~ metric, nrow = 1, scales = "free_x") +
   labs(x = NULL, y = NULL) +
   theme_bw() + theme(legend.position = "none")
 ```
 
 ```{r results-table}
-knitr::kable(subset(results, contrast == "GR_ctrl" & block != "9 Modifier",
+knitr::kable(subset(results, contrast == "GR_YS" & block != "I. Modifier",
                     select = c(block, label, power, signal, fpr_bonferroni, peak_dist_cM,
                                n_GR, n_YS, res_freq_F8, drift_sd, seq_cost_usd)),
              digits = 2, row.names = FALSE)
 ```
 
-## Modifier (block 9)
+## Modifier (panel I)
 
 ```{r results-modifier, fig.height = 6}
-pm <- subset(results, block == "9 Modifier")
+pm <- subset(results, block == "I. Modifier" & contrast %in% main_contrasts)
 parts <- strsplit(pm$label, " | ", fixed = TRUE)
 pm$OR       <- factor(sapply(parts, `[`, 1), levels = c("OR 3", "OR 5", "OR 10"))
 pm$dose     <- sapply(parts, `[`, 2)
 pm$founders <- sapply(parts, `[`, 3)
-ggplot(pm, aes(OR, power_x1, colour = contrast, group = contrast)) +
-  geom_point(size = 2) + geom_line() +
+ggplot(pm, aes(OR, power_x1, colour = contrast, fill = contrast, group = contrast)) +
+  geom_line() + geom_point(shape = 21, colour = "black", size = 2.5) +
+  scale_colour_manual(values = contrast_cols) + scale_fill_manual(values = contrast_cols) +
   facet_grid(founders ~ dose) +
   scale_y_continuous(limits = c(0, 1)) +
   labs(x = "Modifier effect (odds ratio on survival per allele)",
-       y = "Power for chr3 modifier (5% genome-wide FPR)", colour = "Contrast") +
+       y = "Power for chr3 modifier (5% genome-wide FPR)", colour = "Contrast", fill = "Contrast") +
   theme_bw()
 ```
 
@@ -649,16 +701,11 @@ knitr::kable(pm[, c("label", "contrast", "power", "power_x1", "power_all_loci",
 
 # 9. Assumptions and not-yet-modelled
 
-- Genome size (533 Mb) and chromosome physical sizes are from the idCulPipi1.1 assembly.
-- Map lengths (30, 89, 66 cM) are from the published *Cx. quinquefasciatus* linkage map,
-  which is likely an underestimate; cqm1's position (25 cM) assumes even recombination along chr2.
-- Survival by genotype at each dose, and the "lower" high dose, are placeholders until the
-  F2 pilot bioassays.
-- F2 raft count (70) is a placeholder.
+- Chromosome map lengths, survival by genotype, and genome size are placeholders.
 - Ancestry inference is summarized by `aim_eff`: an ancestry window behaves as if
   read from `cov_ind × N × aim_eff` independent fully informative reads.
   `aim_eff = 1` means very poor ancestry-informative SNPs.
-- `delta_anc` is the true ancestry shift at cqm1 (before sequencing noise), so
+- `delta_anc` is the true ancestry shift at the MAL (before sequencing noise), so
   depth and AIM quality do not change it; they act through `signal` and `power`.
 - Not modelled yet: sex and the M locus on chr1 (sex-biased survival could make a
   spurious chr1 peak), failed library preps, and larval mortality unrelated to
