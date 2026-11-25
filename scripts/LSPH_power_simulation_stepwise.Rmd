@@ -1,0 +1,886 @@
+---
+title: "LSPH admixture mapping: stepwise design choice"
+author: "Norah Saarman"
+date: "`r Sys.Date()`"
+output:
+  github_document:
+    toc: true
+knit: (function(input, ...) {
+    rmarkdown::render(
+      input,
+      output_dir = "../scripts_knitted_md",
+      envir = globalenv()
+    )
+  })
+---
+
+```{r setup, include=FALSE}
+library(knitr)
+
+# Set to TRUE only when you want to (re)write the PDFs in ../figures/pdfs/
+save_pdfs <- TRUE
+
+# Figure filenames start with the Rmd's name
+fig_prefix <- sub("\\.Rmd$", "", knitr::current_input())
+
+# PDF device that writes straight into ../figures/pdfs/ (gitignored), same filename as the PNG
+pdf_to_folder <- function(file, width, height, ...) {
+  grDevices::pdf(file.path("../figures/pdfs", basename(file)),
+                 width = width, height = height, ...)
+}
+
+knitr::opts_chunk$set(
+  echo = TRUE, message = FALSE, warning = FALSE,
+  fig.width = 9, fig.height = 5,
+  fig.path = paste0("../figures/knitted_mds/", fig_prefix, "-"),
+  dev     = if (save_pdfs) c("png", "pdf_to_folder") else "png",
+  fig.ext = if (save_pdfs) c("png", "pdf")           else "png"
+)
+
+# ---- Simulation run settings ----
+# RUN_ALL = TRUE runs every step in order while knitting, using the choice lines as they
+# stand (set it in the console before rendering; see "Running everything at once" below)
+if (!exists("RUN_ALL")) RUN_ALL <- FALSE
+N_REP  <- 500   # replicates per scenario
+N_NULL <- 500   # null replicates per distinct null design (sets the 5% genome-wide threshold)
+TARGET <- 1.5   # design target: signal (peak / threshold) in every contrast; 1 = 50% power
+
+# Use the cores Slurm gave this session, but no more than memory allows (~2 GB per worker)
+N_CORES <- as.integer(Sys.getenv("SLURM_CPUS_ON_NODE", unset = "1"))
+mem_gb  <- as.numeric(Sys.getenv("SLURM_MEM_PER_NODE", unset = "32768")) / 1024
+N_CORES <- max(1, min(N_CORES, floor((mem_gb - 4) / 2.5)))
+```
+
+RStudio Configuration:
+
+   - **R version:** R 4.4.0 (Geospatial packages)
+   - **Number of cores:** 28 (of 32 max)
+   - **Memory:** 96 GB (about 2.5 GB per core + 4 GB)
+   - **Time:** each step takes about 10–25 minutes at 28 cores
+   - **Account / partition:** saarman-np
+
+```{r libraries, include = FALSE}
+library(parallel)
+library(ggplot2)
+
+results_dir <- "../results"
+dir.create(results_dir, showWarnings = FALSE)
+
+pal_dark <- c(purple = "#5E4B7A", red = "#C2554B", teal = "#2F8C8D")
+contrast_names <- c(GR_YS = "GR vs YS", GR_ctrl = "GR vs Ctrl", YS_ctrl = "YS vs Ctrl")
+third_arm_name <- c(MS_MD = "Third arm: survivors vs dead")
+
+RNGkind("L'Ecuyer-CMRG")   # reproducible random numbers across parallel workers
+set.seed(20261125)
+```
+
+Cores available to this session: `r N_CORES`.
+
+# 1. Approach
+
+We choose the F8 design **one decision at a time, in dependency order**. Each step
+runs simulations that vary one decision, starting from the design chosen so far; we pick
+the best value, write it into the reference design with a one-line reason, and the
+next step starts from there.
+
+1. **Low dose:** low dose × S/r LC50 (unknown until the F2 pilot). Sets how many
+   YS larvae we can get, and whether YS stays pure (S/S) whatever the S/r response.
+2. **High dose and lab capacity:** high dose × larvae at the high dose × rafts
+   assayed. Sets how many GR larvae we can get.
+3. **Pool layout and rafts assayed:** a fixed number of rafts per phenotype split into
+   more or fewer pools (one larva per raft, so rafts = pools × larvae per pool).
+4. **Larvae per raft:** 2 sibs per raft vs 1 larva per raft, at the chosen pools.
+5. **Ctrl pools:** untreated sibs of random rafts vs sibs matched to the GR and YS rafts.
+6. **Depth:** sequencing depth per larva, including a pessimistic case for
+   ancestry-informative SNPs (AIMs).
+7. **Check:** the chosen design under less favourable biology and colony history we
+   have little control over (bottlenecks, slow population recovery).
+8. **Third dose arm and modifiers:** whether adding an intermediate-dose arm to the
+   chosen design would detect a modifier locus that the two-dose design misses.
+
+"Best" means the cheapest design that reaches the target in all three contrasts:
+signal ≥ `r TARGET` (signal = MAL peak −log10(p) ÷ 5% genome-wide threshold; 1 = 50%
+power).
+
+
+# 2. Model and reference design
+
+One replicate:
+
+1. **Founders (P0):** 55 green-mother × yellow-father and 13 yellow-mother ×
+   green-father crosses. Green carries the resistance allele r at the MAL at
+   frequency `p_res_green` (outbred colony).
+2. **Colony F2 to F8:** each generation is *R* egg rafts, each one mother × one
+   father from random families of the previous generation (Ne ≈ 2R).
+3. **Bioassay at F8:** each assayed raft gives `n_high` larvae at the high dose,
+   `n_low` at the low dose, and untreated sibs. Mortality follows a probit
+   dose-response for each MAL genotype (S/S, S/r, r/r), with a day-to-day dose shift
+   per arm and a raft effect.
+4. **Pools:** **GR** = one survivor of the high dose from each of the most resistant
+   rafts; **YS** = one dead larva at the low dose from each of the most susceptible
+   rafts; **Ctrl** = untreated sibs from random rafts (at most one per raft in each
+   Ctrl pool), as many Ctrl pools as GR + YS pools.
+5. **Sequencing:** each pool's green-ancestry frequency in 0.25 cM windows, with
+   sampling of individuals, uneven DNA contributions, and reads.
+6. **Scan:** per window, a test of green ancestry between pool types (GR vs YS, GR vs
+   Ctrl, YS vs Ctrl). By default a quasibinomial GLM on the read counts, which uses the
+   reads within each pool and estimates overdispersion from pool-to-pool variation, as
+   in the planned analysis. A binomial (CMH-like) test and a Welch t-test on pool means
+   are options. The 5% genome-wide threshold is the 95th percentile of the genome-wide
+   maximum over null replicates (survival independent of genotype).
+
+```{r params}
+F2_RAFTS <- 200   # placeholder: rafts producing F2 (first F1 blood meal went well, Nov 2026)
+F8_RAFTS <- 300   # rafts produced at F8 (may include second-blood-meal rafts)
+
+ref <- list(   # reference design: each step starts from these values and updates them
+  ## Genome (map lengths from Cx. quinquefasciatus; placeholders)
+  chrom_cM  = c(chr1 = 30, chr2 = 89, chr3 = 66),
+  marker_cM = 0.25,
+
+  ## Biology (not controllable; step 7 checks less favourable values)
+  causal_chr   = "chr2", causal_cM = 25,   # MAL, ~60.1 Mb on chr2
+  p_res_green  = 0.9,                      # r-allele frequency in green founders ("likely")
+  p_res_yellow = 0.0,
+  ## probit dose-response (24 h): S/S = yellow Y3, r/r = green G8; S/r unknown (placeholder)
+  LC50         = c(SS = 0.0167, RS = 0.2, RR = 249),
+  probit_slope = c(SS = 3.70,   RS = 3.4, RR = 3.15),
+  dose_day_sd  = 0.15,   # day-to-day shift in effective dose, log10 units (~x1.4), per arm
+  raft_sd   = 0.5,    # raft-to-raft variation in mortality, probit units
+  family_cv = 0,      # CV of family contribution to the next generation (0 = Poisson)
+  father_ratio = 1,   # fathers per raft (0.5 = each male fathers 2 rafts on average)
+  aim_eff = 10,       # effective number of fully informative SNPs per window
+  dna_cv  = 0.2,      # CV of each larva's DNA contribution within a pool
+  null_surv = 0.5,    # survival in null replicates
+  n_P0_green_mother = 55, n_P0_yellow_mother = 13,
+
+  ## Design (what the steps choose)
+  rafts = c(F2_RAFTS, 80, 100, 120, 150, 175, F8_RAFTS),   # rafts producing F2..F8
+  dose_high = 250, dose_low = 0.01,   # ppm
+  n_assay_rafts = 200,                # F8 rafts bioassayed
+  n_high = 40, n_low = 40,            # larvae per raft at each dose
+  n_pools_GR = 5, n_pools_YS = 5,     # pools per phenotype (Ctrl: as many as GR + YS)
+  N_per_pool = 20,                    # larvae per pool
+  cov_ind = 5,                        # sequencing depth per larva
+  test = "quasibinomial",             # scan test: "quasibinomial" GLM on read counts (planned analysis),
+                                      # "binomial" (reads as independent, CMH-like) or "welch" (t-test on pool means)
+
+  ## Options checked in steps 4 and 5
+  ctrl_design     = "random",  # Ctrl sibs from random rafts, or "matched" to each GR / YS pool's rafts
+  larvae_per_raft = 1,         # larvae from each raft in a GR or YS pool (2 = sibs from half as many rafts)
+  ## Third arm and modifier, checked in step 8
+  n_mid = 0, dose_mid = 0.2,   # third arm: larvae per raft at an intermediate dose (0 = no third arm), ppm
+  n_pools_MS = 5, n_pools_MD = 5,   # third-arm pools: survivors (MS) and dead (MD)
+  ## modifier locus (OR 1 = none): odds ratio on survival per allele, allele freq in green / yellow founders
+  mod_OR = 1, mod_chr = "chr3", mod_cM = 40, mod_p_green = 1, mod_p_yellow = 0,
+
+  ## Cost (USD)
+  genome_Mb = 533, cost_lib = 52, cost_per_M_pairs = 1.02, read_pair_bp = 300,
+  power_window_cM = 10   # a peak within ±10 cM of the MAL counts as a hit
+)
+
+## Parameters that change survival but not the null (null survival ignores genotype),
+## so scenarios that differ only in these share the same null replicates
+effect_only <- c("causal_chr", "causal_cM", "p_res_green", "p_res_yellow", "LC50", "probit_slope",
+                 "dose_day_sd", "raft_sd", "dose_high", "dose_low", "dose_mid", "genome_Mb", "cost_lib",
+                 "cost_per_M_pairs", "read_pair_bp", "power_window_cM",
+                 "mod_OR", "mod_p_green", "mod_p_yellow")
+```
+
+# 3. Simulation
+
+`meiosis()` makes one gamete per parent: genomes are founder-haplotype IDs at each
+marker, and the gamete switches parental haplotype wherever a crossover falls
+(Haldane map function).
+
+```{r meiosis}
+meiosis <- function(geno, parents, map) {
+  ng <- length(parents)
+  gam <- list()
+  for (cc in names(geno)) {
+    r <- map[[cc]]$r
+    M <- length(r) + 1
+    origin <- matrix(0L, ng, M)                 # which parental haplotype (1 or 2)
+    origin[, 1] <- sample.int(2L, ng, replace = TRUE)
+    for (j in 2:M) {
+      crossover <- runif(ng) < r[j - 1]
+      origin[, j] <- ifelse(crossover, 3L - origin[, j - 1], origin[, j - 1])
+    }
+    idx <- cbind(rep(parents, times = M), as.vector(origin), rep(1:M, each = ng))
+    gam[[cc]] <- matrix(geno[[cc]][idx], ng, M)
+  }
+  gam
+}
+```
+
+`simulate_replicate()` runs steps 1–6 once. `keep = TRUE` also returns the scan for
+plotting.
+
+```{r replicate}
+simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
+
+  ## ---- Genetic map ----------------------------------------------------------
+  map <- lapply(p$chrom_cM, function(L) {
+    pos <- seq(0, L, by = p$marker_cM)
+    list(pos = pos, r = 0.5 * (1 - exp(-2 * diff(pos) / 100)))
+  })
+  chr_of <- rep(names(map), sapply(map, function(m) length(m$pos)))
+  pos_of <- unlist(lapply(map, function(m) m$pos), use.names = FALSE)
+  i_causal <- which.min(abs(map[[p$causal_chr]]$pos - p$causal_cM))
+  i_mod    <- which.min(abs(map[[p$mod_chr]]$pos - p$mod_cM))
+
+  ## ---- 1. P0 founders ---------------------------------------------------------
+  ## individuals 1..n_cross are mothers, the rest fathers; haplotypes 2i-1 and 2i are individual i's
+  nG <- p$n_P0_green_mother; nY <- p$n_P0_yellow_mother
+  n_cross <- nG + nY
+  green_ind <- c(rep(1L, nG), rep(0L, nY), rep(0L, nG), rep(1L, nY))   # 1 = green
+  n_ind <- 2 * n_cross
+  hap_green <- rep(green_ind, each = 2)
+  hap_res <- rbinom(2 * n_ind, 1, ifelse(hap_green == 1, p$p_res_green, p$p_res_yellow))
+  hap_mod <- rbinom(2 * n_ind, 1, ifelse(hap_green == 1, p$mod_p_green, p$mod_p_yellow))
+  geno <- list()
+  for (cc in names(map)) {
+    a <- array(0L, c(n_ind, 2, length(map[[cc]]$pos)))
+    a[, 1, ] <- 2L * (1:n_ind) - 1L
+    a[, 2, ] <- 2L * (1:n_ind)
+    geno[[cc]] <- a
+  }
+  mom <- 1:n_cross
+  dad <- n_cross + 1:n_cross
+
+  ## ---- 2. Colony F2 ... F8 ----------------------------------------------------
+  for (g in 2:8) {
+    R_prev <- length(mom)
+    R_next <- p$rafts[g - 1]
+    w <- if (p$family_cv > 0) rgamma(R_prev, 1 / p$family_cv^2, 1 / p$family_cv^2) else rep(1, R_prev)
+    n_fathers <- max(1, round(R_next * p$father_ratio))
+    fam <- c(sample.int(R_prev, R_next,    replace = TRUE, prob = w),   # new mothers' families
+             sample.int(R_prev, n_fathers, replace = TRUE, prob = w))   # new fathers' families
+    gm <- meiosis(geno, mom[fam], map)
+    gf <- meiosis(geno, dad[fam], map)
+    for (cc in names(map)) {
+      a <- array(0L, c(length(fam), 2, ncol(gm[[cc]])))
+      a[, 1, ] <- gm[[cc]]
+      a[, 2, ] <- gf[[cc]]
+      geno[[cc]] <- a
+    }
+    mom <- 1:R_next
+    dad <- R_next + (if (n_fathers >= R_next) sample.int(n_fathers, R_next)
+                     else sample.int(n_fathers, R_next, replace = TRUE))
+  }
+
+  ## ---- 3. Bioassay at F8 ----------------------------------------------------------
+  A <- p$n_assay_rafts
+  assay <- sample.int(length(mom), A)
+  n_pools_ctrl <- p$n_pools_GR + p$n_pools_YS
+  ## untreated sibs per raft: enough to fill the Ctrl pools (2 for matched Ctrl: a raft can be in GR and YS)
+  n_c <- max(if (p$ctrl_design == "matched") 2 else 1, ceiling(n_pools_ctrl * p$N_per_pool / A))
+  n_per_raft <- p$n_high + p$n_low + p$n_mid + n_c
+  raft_of <- rep(1:A, each = n_per_raft)
+  type <- rep(c(rep("H", p$n_high), rep("L", p$n_low), rep("M", p$n_mid), rep("C", n_c)), times = A)
+
+  gm <- meiosis(geno, mom[assay][raft_of], map)   # every larva's maternal gamete
+  gf <- meiosis(geno, dad[assay][raft_of], map)   # ... and paternal gamete
+
+  n_res <- hap_res[gm[[p$causal_chr]][, i_causal]] + hap_res[gf[[p$causal_chr]][, i_causal]]
+  log_dose <- ifelse(type == "H", log10(p$dose_high) + rnorm(1, 0, p$dose_day_sd),
+              ifelse(type == "L", log10(p$dose_low)  + rnorm(1, 0, p$dose_day_sd),
+              ifelse(type == "M", log10(p$dose_mid)  + rnorm(1, 0, p$dose_day_sd), NA)))
+  raft_eff <- rnorm(A, 0, p$raft_sd)[raft_of]
+  z <- p$probit_slope[n_res + 1] * (log_dose - log10(p$LC50[n_res + 1])) + raft_eff
+  surv <- 1 - pnorm(z)                            # NA for untreated sibs
+  if (p$mod_OR != 1) {                            # modifier: log(OR) per allele on the logit scale
+    n_mod <- hap_mod[gm[[p$mod_chr]][, i_mod]] + hap_mod[gf[[p$mod_chr]][, i_mod]]
+    surv  <- plogis(qlogis(pmin(pmax(surv, 1e-6), 1 - 1e-6)) + log(p$mod_OR) * n_mod)
+  }
+  if (null) surv[type != "C"] <- p$null_surv
+  alive <- runif(length(surv)) < surv
+
+  survH <- as.numeric(tapply(alive[type == "H"], raft_of[type == "H"], mean))   # per raft
+  mortL <- as.numeric(tapply(!alive[type == "L"], raft_of[type == "L"], mean))
+
+  ## ---- 4. Pools ---------------------------------------------------------------
+  ## k larvae with the wanted outcome from each of the most extreme rafts; a raft's larvae
+  ## stay in one pool
+  k <- p$larvae_per_raft
+  pick_arm <- function(arm, want_alive, score, n_pools) {
+    is_arm <- type == arm
+    n_ok <- as.numeric(tapply(alive[is_arm] == want_alive, raft_of[is_arm], sum))   # per raft
+    cand <- which(n_ok >= k)
+    use  <- head(cand[order(-score[cand], runif(length(cand)))], ceiling(n_pools * p$N_per_pool / k))
+    ok   <- which(is_arm & alive %in% want_alive)
+    larv <- as.integer(unlist(lapply(use, function(r) { v <- ok[raft_of[ok] == r]; v[sample.int(length(v), k)] })))
+    pool_raft <- sample(rep(1:n_pools, length.out = length(use)))    # pool of each raft
+    list(larv = larv, pool = rep(pool_raft, each = k), use = use, pool_raft = pool_raft,
+         n_rafts = sum(n_ok > 0))
+  }
+  pools <- list(GR = pick_arm("H", TRUE,  survH, p$n_pools_GR),   # survivors, most resistant rafts
+                YS = pick_arm("L", FALSE, mortL, p$n_pools_YS))   # dead, most susceptible rafts
+  if (p$n_mid > 0) {                              # third arm: survivors and dead at the intermediate dose
+    survM <- as.numeric(tapply(alive[type == "M"], raft_of[type == "M"], mean))
+    pools$MS <- pick_arm("M", TRUE,  survM,     p$n_pools_MS)
+    pools$MD <- pick_arm("M", FALSE, 1 - survM, p$n_pools_MD)
+  }
+  C_by_raft <- matrix(which(type == "C"), nrow = n_c)   # column = raft
+  if (p$ctrl_design == "random") {
+    ## untreated sibs of random rafts; a raft's second (third, ...) sib usually goes to another pool
+    n_need_c <- n_pools_ctrl * p$N_per_pool
+    pools$ctrl <- list(larv = unlist(lapply(1:n_c, function(j) C_by_raft[j, sample.int(A)]))[1:n_need_c],
+                       pool = rep(1:n_pools_ctrl, length.out = n_need_c))
+  } else {
+    ## matched: Ctrl pool j holds a sib from each raft in GR pool j (and likewise for YS)
+    pools$ctrl <- list(larv = c(C_by_raft[1, pools$GR$use], C_by_raft[2, pools$YS$use]),
+                       pool = c(pools$GR$pool_raft, p$n_pools_GR + pools$YS$pool_raft))
+  }
+  n_pools <- c(GR = p$n_pools_GR, YS = p$n_pools_YS, ctrl = n_pools_ctrl,
+               MS = p$n_pools_MS, MD = p$n_pools_MD)
+
+  ## ---- 5. Pool and "sequence" --------------------------------------------------
+  dna_w <- if (p$dna_cv > 0) rgamma(length(raft_of), 1 / p$dna_cv^2, 1) else rep(1, length(raft_of))
+  est <- list()
+  for (ph in names(pools)) {
+    larv <- pools[[ph]]$larv
+    n_p  <- n_pools[[ph]]
+    if (length(larv) < 2 * n_p) next                 # too few larvae: pool type missing
+    pool <- pools[[ph]]$pool
+    ## green ancestry (0, 0.5, 1) of each larva at every window
+    anc <- do.call(cbind, lapply(names(map), function(cc)
+      matrix(hap_green[gm[[cc]][larv, , drop = FALSE]] +
+             hap_green[gf[[cc]][larv, , drop = FALSE]], nrow = length(larv)) / 2))
+    n_eff <- sapply(1:n_p, function(j) max(1, round(p$cov_ind * sum(pool == j) * p$aim_eff)))  # effective reads per window
+    est[[ph]] <- list(n = n_eff, f = t(sapply(1:n_p, function(j) {    # f: pool x window ancestry frequency
+      i <- which(pool == j)
+      true_freq <- colSums(anc[i, , drop = FALSE] * dna_w[larv[i]] / sum(dna_w[larv[i]]))
+      rbinom(length(true_freq), n_eff[j], pmin(pmax(true_freq, 0), 1)) / n_eff[j]
+    })))
+  }
+
+  ## ---- 6. Scan: test between pool types, per window (p$test) -----------------------
+  in_causal <- chr_of == p$causal_chr & abs(pos_of - p$causal_cM) <= p$power_window_cM
+  in_mod    <- chr_of == p$mod_chr    & abs(pos_of - p$mod_cM)    <= p$power_window_cM
+  on_cchr   <- chr_of == p$causal_chr
+  out <- data.frame(null = null)
+  mlp_all <- list()
+  contrasts <- list(GR_YS = c("GR", "YS"), GR_ctrl = c("GR", "ctrl"), YS_ctrl = c("YS", "ctrl"))
+  if (p$n_mid > 0) contrasts$MS_MD <- c("MS", "MD")
+  for (cn in names(contrasts)) {
+    X <- est[[contrasts[[cn]][1]]]
+    Y <- est[[contrasts[[cn]][2]]]
+    if (is.null(X) || is.null(Y)) {
+      mlp <- rep(NA_real_, length(chr_of))
+    } else if (p$test == "welch") {
+      ## Welch t-test on pool frequencies: pools are the replicates, read counts are ignored
+      vx <- apply(X$f, 2, var) / nrow(X$f)
+      vy <- apply(Y$f, 2, var) / nrow(Y$f)
+      tt <- (colMeans(X$f) - colMeans(Y$f)) / pmax(sqrt(vx + vy), 1e-8)
+      df <- (vx + vy)^2 / (vx^2 / (nrow(X$f) - 1) + vy^2 / (nrow(Y$f) - 1))
+      df[!is.finite(df)] <- nrow(X$f) + nrow(Y$f) - 2
+      mlp <- -(log(2) + pt(-abs(tt), df, log.p = TRUE)) / log(10)   # -log10(p)
+    } else {
+      ## read-count tests: green-ancestry reads out of n reads per pool, summed by pool type
+      n1 <- sum(X$n); n2 <- sum(Y$n)
+      p1 <- colSums(X$f * X$n) / n1                  # rows of f are weighted by that pool's reads
+      p2 <- colSums(Y$f * Y$n) / n2
+      v1 <- pmax(p1 * (1 - p1), 1e-8); v2 <- pmax(p2 * (1 - p2), 1e-8)
+      z  <- (p1 - p2) / sqrt(v1 / n1 + v2 / n2)       # Wald z for the pool-type effect
+      if (p$test == "binomial") {
+        ## binomial GLM / CMH-like: all reads treated as independent
+        mlp <- -(log(2) + pnorm(-abs(z), log.p = TRUE)) / log(10)
+      } else {
+        ## quasibinomial GLM: dispersion estimated from pool-to-pool variation (Pearson),
+        ## so overdispersion from drift, family sampling and uneven DNA is accounted for
+        k   <- nrow(X$f) + nrow(Y$f)
+        phi <- (colSums((t(t(X$f) - p1))^2 * X$n) / v1 + colSums((t(t(Y$f) - p2))^2 * Y$n) / v2) / (k - 2)
+        mlp <- -(log(2) + pt(-abs(z / sqrt(pmax(phi, 1e-8))), k - 2, log.p = TRUE)) / log(10)
+      }
+    }
+    mlp_all[[cn]] <- mlp
+    out[[paste0(cn, "_genome")]]   <- suppressWarnings(max(mlp, na.rm = TRUE))
+    out[[paste0(cn, "_causal")]]   <- suppressWarnings(max(mlp[in_causal], na.rm = TRUE))
+    out[[paste0(cn, "_mod")]]      <- suppressWarnings(max(mlp[in_mod], na.rm = TRUE))
+    out[[paste0(cn, "_peakdist")]] <- if (all(is.na(mlp))) NA else
+      abs(pos_of[on_cchr][which.max(mlp[on_cchr])] - p$causal_cM)
+  }
+
+  ## diagnostics
+  out$n_GR <- length(pools$GR$larv); out$n_YS <- length(pools$YS$larv); out$n_ctrl <- length(pools$ctrl$larv)
+  out$n_rafts_surv_H <- pools$GR$n_rafts   # rafts with at least one survivor at the high dose
+  out$n_rafts_dead_L <- pools$YS$n_rafts   # rafts with at least one dead larva at the low dose
+  for (v in names(out)) if (is.numeric(out[[v]]) && !is.finite(out[[v]])) out[[v]] <- NA
+
+  if (keep) return(list(summary = out, mlp = mlp_all, est = est, chr = chr_of, pos = pos_of))
+  out
+}
+```
+
+One replicate of the reference design, to check that it looks sensible:
+
+```{r demo, fig.height = 4}
+demo <- simulate_replicate(ref, keep = TRUE)
+knitr::kable(demo$summary[, c("n_GR", "n_YS", "n_ctrl", "n_rafts_surv_H", "n_rafts_dead_L",
+                              "GR_YS_causal", "GR_YS_genome")], digits = 2)
+plot(seq_along(demo$chr), demo$mlp$GR_YS, pch = 19, cex = 0.4,
+     col = pal_dark[as.integer(factor(demo$chr))],
+     xlab = "Window (chr1 | chr2 | chr3)", ylab = "-log10(p)", main = "GR vs YS scan, one replicate")
+abline(v = which(demo$chr == ref$causal_chr & demo$pos == ref$causal_cM), lty = 2)
+```
+
+# 4. Running a step
+
+`run_step()` runs a list of scenarios, each a set of changes to the current
+reference design. Null replicates depend only on the design (not on doses or MAL
+biology), so they are run once per distinct null design and shared. Every call
+uses the same random-number streams, so scenarios are compared on the same
+simulated colonies and differences reflect the design rather than chance.
+
+Results are saved to `../results/lsph_stepwise_<step>.csv` (summary, kept in git)
+and `.rds` (with all replicates, so new summaries never need a rerun).
+
+```{r run-step}
+run_step <- function(name, scen) {
+  t0 <- Sys.time()
+  ps   <- lapply(scen, function(s) modifyList(ref, s$changes))
+  keys <- sapply(ps, function(p) paste(deparse(p[setdiff(names(p), effect_only)]), collapse = ""))
+  ## replicates that fail or whose worker is killed (out of memory) are dropped and counted in n_rep / n_null
+  sim <- function(p, null, n) do.call(rbind, Filter(is.data.frame, mclapply(1:n, function(i)
+    tryCatch(simulate_replicate(p, null = null), error = function(e) NULL),
+    mc.cores = N_CORES, mc.set.seed = TRUE)))
+
+  nulls <- list()
+  for (k in unique(keys)) nulls[[k]] <- sim(ps[[match(k, keys)]], TRUE, N_NULL)
+
+  res <- list(); reps <- list()
+  for (i in seq_along(scen)) {
+    p <- ps[[i]]
+    cat(format(Sys.time(), "%H:%M"), name, "|", scen[[i]]$label, "\n")
+    alt <- sim(p, FALSE, N_REP)
+    nul <- nulls[[keys[i]]]
+    reps[[scen[[i]]$label]] <- alt
+    ## cost: one library per pool (GR, YS, as many Ctrl, and third-arm pools) + reads for every pooled larva
+    n_third  <- if (p$n_mid > 0) p$n_pools_MS + p$n_pools_MD else 0
+    n_larvae <- mean(alt$n_GR) + mean(alt$n_YS) + mean(alt$n_ctrl) + n_third * p$N_per_pool
+    cost <- (2 * (p$n_pools_GR + p$n_pools_YS) + n_third) * p$cost_lib +
+      p$cost_per_M_pairs * p$cov_ind * n_larvae * p$genome_Mb / p$read_pair_bp
+    cns <- intersect(c(names(contrast_names), names(third_arm_name)),
+                     sub("_causal$", "", grep("_causal$", names(alt), value = TRUE)))
+    for (cn in cns) {
+      thr <- quantile(nul[[paste0(cn, "_genome")]], 0.95, na.rm = TRUE)
+      pk  <- alt[[paste0(cn, "_causal")]]
+      res[[length(res) + 1]] <- data.frame(
+        step = name, group = if (is.null(scen[[i]]$group)) "" else scen[[i]]$group,
+        label = scen[[i]]$label, contrast = cn,
+        signal = median(pk / thr, na.rm = TRUE), power = mean(pk > thr, na.rm = TRUE),
+        power_mod = if (p$mod_OR != 1) mean(alt[[paste0(cn, "_mod")]] > thr, na.rm = TRUE) else NA,
+        threshold = unname(thr),
+        peak_dist_cM = median(alt[[paste0(cn, "_peakdist")]][pk > thr], na.rm = TRUE),
+        fill_GR = mean(alt$n_GR) / (p$n_pools_GR * p$N_per_pool),
+        fill_YS = mean(alt$n_YS) / (p$n_pools_YS * p$N_per_pool),
+        rafts_surv_H = mean(alt$n_rafts_surv_H), rafts_dead_L = mean(alt$n_rafts_dead_L),
+        cost_usd = round(cost),
+        dose_high = p$dose_high, dose_low = p$dose_low, n_assay_rafts = p$n_assay_rafts,
+        n_high = p$n_high, n_pools = p$n_pools_GR, N_per_pool = p$N_per_pool,
+        cov_ind = p$cov_ind, aim_eff = p$aim_eff, ctrl_design = p$ctrl_design,
+        larvae_per_raft = p$larvae_per_raft, n_mid = p$n_mid, mod_OR = p$mod_OR,
+        mod_p_green = p$mod_p_green, mod_p_yellow = p$mod_p_yellow,
+        n_rep = nrow(alt), n_null = nrow(nul))
+    }
+  }
+  res <- do.call(rbind, res)
+  write.csv(res, file.path(results_dir, paste0("lsph_stepwise_", name, ".csv")), row.names = FALSE)
+  saveRDS(list(results = res, replicates = reps, nulls = nulls, ref = ref, scenarios = scen,
+               sim_code = deparse(utils::removeSource(simulate_replicate)), run_date = Sys.time()),
+          file.path(results_dir, paste0("lsph_stepwise_", name, ".rds")))
+  cat("Done in", format(Sys.time() - t0), "\n")
+  res
+}
+
+## Load a saved step; warn if earlier choices changed after it was run (then rerun it)
+load_step <- function(name) {
+  f <- file.path(results_dir, paste0("lsph_stepwise_", name, ".rds"))
+  if (!file.exists(f)) { cat("Step", name, "has not been run yet.\n"); return(NULL) }
+  b <- readRDS(f)
+  if (!identical(b$ref, ref)) warning("The reference design changed after ", name, " was run: rerun it")
+  all_names <- c(contrast_names, third_arm_name)
+  b$results$contrast_name <- factor(all_names[b$results$contrast], levels = all_names)
+  b$results
+}
+
+## One row per scenario, cheapest first: signal in each contrast, pool filling, cost
+decision_table <- function(res) {
+  w <- reshape(res[, c("label", "contrast", "signal")], idvar = "label",
+               timevar = "contrast", direction = "wide")
+  names(w) <- sub("^signal\\.", "", names(w))
+  d <- res[res$contrast == "GR_YS", c("label", "fill_GR", "fill_YS", "cost_usd", "n_rep")]
+  w <- merge(w, d, by = "label")
+  w$min_signal   <- pmin(w$GR_YS, w$GR_ctrl, w$YS_ctrl)
+  w$meets_target <- w$min_signal >= TARGET
+  w[order(w$cost_usd), ]
+}
+
+## Threshold (1) and target lines for signal panels
+ref_lines <- data.frame(y = c(1, TARGET), line = c("threshold", "target"))
+
+## Signal of each scenario in the three contrasts (steps with a few labelled scenarios)
+dot_plot <- function(res, first = res$label[1]) {
+  res$label <- factor(res$label, levels = rev(unique(res$label)))
+  ggplot(res, aes(signal, label)) +
+    geom_vline(data = ref_lines, aes(xintercept = y, linetype = line), colour = "grey50") +
+    geom_point(aes(fill = label == first), shape = 21, size = 3) +
+    scale_fill_manual(values = c(`TRUE` = "white", `FALSE` = pal_dark[["purple"]]), guide = "none") +
+    scale_linetype_manual(values = c(threshold = 2, target = 3), name = NULL) +
+    facet_wrap(~ contrast_name) + expand_limits(x = 0) +
+    labs(x = "Peak -log10(p) / threshold -log10(p)", y = NULL,
+         subtitle = paste0("Open circle: ", first)) +
+    theme_bw() + theme(panel.grid.minor = element_blank())
+}
+```
+
+**Running everything at once.** Each step's `run` chunk is `eval = RUN_ALL`. To run all
+eight steps in order (about 2.5 hours at 28 cores, 500 replicates), using the choice
+lines as they stand, type in the console:
+
+    RUN_ALL <- TRUE
+    rmarkdown::render("LSPH_power_simulation_stepwise.Rmd", output_dir = "../scripts_knitted_md", envir = globalenv())
+
+To redo one step, run its `run` chunk by hand. After changing a choice, rerun the steps
+after it (knitting warns which ones are out of date).
+
+Before the first step, check that the options and extremes run (a few minutes, nothing saved). Expect n_GR, n_YS near 100 (fewer when rafts with a survivor run short) and n_ctrl = 20 × (GR + YS pools):
+
+```{r check, eval = FALSE}
+checks <- list("reference design"               = list(),
+               "Ctrl matched"                   = list(ctrl_design = "matched"),
+               "2 sibs per raft"                = list(larvae_per_raft = 2),
+               "50 ppm, 80 larvae, 300 rafts"   = list(n_assay_rafts = 300, n_high = 80, dose_high = 50),
+               "10 pools x 20 larvae"           = list(n_pools_GR = 10, n_pools_YS = 10, N_per_pool = 20),
+               "third arm + modifier OR 5"      = list(n_mid = 40, mod_OR = 5))
+chk <- do.call(rbind, lapply(names(checks), function(nm) {
+  p  <- modifyList(ref, checks[[nm]])
+  x  <- simulate_replicate(p)
+  x0 <- simulate_replicate(p, null = TRUE)   # the null replicate must run too
+  data.frame(check = nm, x[c("n_GR", "n_YS", "n_ctrl", "n_rafts_surv_H", "n_rafts_dead_L", "GR_YS_causal")],
+             null_GR_YS_genome = x0$GR_YS_genome)
+}))
+print(chk, digits = 3)   # one table: all checks
+```
+
+# 5. Step 1: low dose
+
+The low dose should kill S/S (to fill the YS pools) but spare S/r, so that YS stays
+S/S whatever the S/r response turns out to be. Each low dose is run under four
+hypotheses for the S/r LC50: 0.0167 ppm (fully recessive: S/r dies like S/S), 0.05 ppm
+(nearly recessive, where a higher low dose starts killing S/r), 0.2 ppm (reference), and
+5 ppm (an outer check: the F1 LC50 was close to yellow's, and a small F1 run had 1
+survivor at 0.5 ppm and none at 5 or 50 ppm, so higher values are unlikely).
+4 doses × 4 S/r LC50s = 16 scenarios (doses do not change the null, so all share one
+set of null replicates).
+
+```{r step1-run, eval = RUN_ALL}
+g <- expand.grid(dose_low = c(0.005, 0.01, 0.02, 0.04), RS = c(0.0167, 0.05, 0.2, 5))   # 0.0167 = yellow S/S LC50 (fully recessive)
+s1_scen <- lapply(1:nrow(g), function(i) list(
+  label   = paste0("low ", g$dose_low[i], " ppm, S/r LC50 ", g$RS[i], " ppm"),
+  changes = list(dose_low = g$dose_low[i], LC50 = replace(ref$LC50, "RS", g$RS[i]))))
+run_step("step1", s1_scen)
+```
+
+```{r step1-results, fig.width = 8, fig.height = 2}
+s1 <- load_step("step1")
+if (!is.null(s1)) {
+  s1$RS <- as.numeric(sub(".*S/r LC50 ([0-9.]+) ppm", "\\1", s1$label))
+  one <- s1[s1$contrast == "GR_YS", ]
+  pd <- rbind(
+    data.frame(one[, c("dose_low", "RS")], panel = "YS pools filled (%)", value = 100 * one$fill_YS),
+    data.frame(s1[, c("dose_low", "RS")], panel = as.character(s1$contrast_name), value = s1$signal))
+  pd$panel <- factor(pd$panel, levels = c("YS pools filled (%)", contrast_names))
+  lines <- merge(data.frame(panel = factor(contrast_names, levels = levels(pd$panel))), ref_lines)
+  print(ggplot(pd, aes(dose_low, value, colour = factor(RS), group = factor(RS))) +
+    geom_hline(data = lines, aes(yintercept = y, linetype = line), colour = "grey50") +
+    geom_line() + geom_point(size = 2.5) +
+    scale_colour_manual(values = c(unname(pal_dark), "grey40"), name = "S/r LC50 (ppm)") +
+    scale_linetype_manual(values = c(threshold = 2, target = 3), name = NULL) +
+    scale_x_log10(breaks = c(0.005, 0.01, 0.02, 0.04)) +
+    facet_wrap(~ panel, scales = "free_y", nrow = 1) + expand_limits(y = 0) +
+    labs(x = "Low dose (ppm)", y = NULL, subtitle = "Signal panels: peak -log10(p) / threshold -log10(p)") +
+    theme_bw() + theme(panel.grid.minor = element_blank()))
+}
+```
+
+```{r step1-table}
+if (!is.null(s1)) knitr::kable(decision_table(s1), digits = 2, row.names = FALSE)
+```
+
+**Choice after step 1** (edit after looking at the results above, and say why):
+
+```{r step1-choice}
+ref <- modifyList(ref, list(dose_low = 0.01))   # step 1 choice: highest worst-case YS vs Ctrl across S/r LC50 0.05–5 ppm (≥ 2.1); YS pools 93–100% full; fully recessive case is below target at any low dose. CONSIDER CHANGING TO 0.02 IF the F2 pilot’s estimate of the S/r LC50 is near 0.2 or above, 0.02 is just as good and will more reliably fill the YS pools.
+```
+
+# 6. Step 2: high dose and lab capacity
+
+A lower high dose leaves more survivors, so more rafts can give a GR larva and the
+GR pools fill; more larvae at the high dose and more rafts assayed do the same. The
+risk of a lower dose is that S/r larvae survive too if the S/r LC50 is high; step 7
+checks the chosen dose under S/r LC50s from 0.0167 (fully recessive) to 5 ppm. 3 doses × 3 larvae ×
+2 raft numbers = 18 scenarios (~25 min).
+
+```{r step2-run, eval = RUN_ALL}
+g <- expand.grid(dose_high = c(50, 100, 250), n_high = c(40, 60, 80), n_assay_rafts = c(200, 300))
+s2_scen <- lapply(1:nrow(g), function(i) list(
+  label   = paste0(g$dose_high[i], " ppm, ", g$n_high[i], " larvae, ", g$n_assay_rafts[i], " rafts"),
+  changes = as.list(g[i, ])))
+run_step("step2", s2_scen)
+```
+GR pools are limited by how many rafts can produce r/r larvae (about half of the
+assayed rafts), not by the high dose or larvae per raft: see `rafts_surv_H` (rafts
+with a survivor at the high dose) and `rafts_dead_L` (rafts with a dead larva at the
+low dose) in the table. One larva per raft means the pools need 100 rafts of each.
+
+```{r step2-results, fig.width = 10, fig.height = 6}
+s2 <- load_step("step2")
+if (!is.null(s2)) {
+  s2$rafts_lab <- paste(s2$n_assay_rafts, "rafts assayed")
+  print(ggplot(s2, aes(n_high, signal, colour = factor(dose_high), group = factor(dose_high))) +
+    geom_hline(data = ref_lines, aes(yintercept = y, linetype = line), colour = "grey50") +
+    geom_line() + geom_point(size = 2.5) +
+    scale_colour_manual(values = unname(pal_dark), name = "High dose (ppm)") +
+    scale_linetype_manual(values = c(threshold = 2, target = 3), name = NULL) +
+    scale_x_continuous(breaks = c(40, 60, 80)) +
+    facet_grid(contrast_name ~ rafts_lab) + expand_limits(y = 0) +
+    labs(x = "Larvae per raft at the high dose", y = "Peak -log10(p) / threshold -log10(p)") +
+    theme_bw() + theme(panel.grid.minor = element_blank()))
+}
+```
+
+```{r step2-table}
+if (!is.null(s2)) {
+  tab <- merge(decision_table(s2),
+               s2[s2$contrast == "GR_YS", c("label", "rafts_surv_H", "rafts_dead_L")], by = "label")
+  knitr::kable(tab[order(tab$cost_usd), ], digits = 2, row.names = FALSE)
+}
+```
+**Choice after step 2:**
+
+```{r step2-choice}
+ref <- modifyList(ref, list(dose_high = 250, n_high = 40))   # step 2: dose (50–250 ppm) and larvae (40–80) barely change signal; GR filling is limited by rafts able to produce r/r (~48%), so rafts assayed is decided with the pool layout in step 3
+```
+
+# 7. Step 3: pool layout and rafts assayed
+
+With one larva per raft, rafts per phenotype = pools × larvae per pool. To compare
+layouts fairly, the number of rafts per phenotype is fixed and split into more or
+fewer pools: 100 rafts as 5 × 20, 10 × 10 or 20 × 5, and 150 rafts as 5 × 30,
+10 × 15 or 15 × 10. About 48% of assayed rafts have a survivor at the high dose
+(step 2), so 300 assayed rafts give about 145 GR rafts: enough for 100 per
+phenotype, and just short of 150. Ctrl pools follow (as many as GR + YS pools).
+6 scenarios.
+
+```{r step3-run, eval = RUN_ALL}
+splits <- data.frame(total = c(100, 100, 100, 150, 150, 150),
+                     n_pools = c(5, 10, 20, 5, 10, 15))
+splits$N_per_pool <- splits$total / splits$n_pools
+s3_scen <- lapply(1:nrow(splits), function(i) list(
+  label   = paste0(splits$total[i], " rafts: ", splits$n_pools[i], " pools x ", splits$N_per_pool[i], " larvae"),
+  changes = list(n_pools_GR = splits$n_pools[i], n_pools_YS = splits$n_pools[i],
+                 N_per_pool = splits$N_per_pool[i], n_assay_rafts = 300)))
+run_step("step3", s3_scen)
+```
+
+```{r step3-results, fig.width = 11, fig.height = 4}
+s3 <- load_step("step3")
+if (!is.null(s3)) {
+  s3$total <- s3$n_pools * s3$N_per_pool
+  print(ggplot(s3, aes(n_pools, signal, colour = factor(total), group = factor(total))) +
+    geom_hline(data = ref_lines, aes(yintercept = y, linetype = line), colour = "grey50") +
+    geom_line() + geom_point(size = 3) +
+    geom_text(aes(label = paste0(N_per_pool, " larvae")), vjust = -1.1, size = 3, show.legend = FALSE) +
+    scale_colour_manual(values = unname(pal_dark), name = "Rafts per phenotype") +
+    scale_linetype_manual(values = c(threshold = 2, target = 3), name = NULL) +
+    scale_x_continuous(breaks = c(5, 10, 15, 20)) +
+    facet_wrap(~ contrast_name, nrow = 1) + expand_limits(y = 0) +
+    labs(x = "Pools per phenotype (same rafts, split into more, smaller pools)",
+         y = "Peak -log10(p) / threshold -log10(p)") +
+    theme_bw() + theme(panel.grid.minor = element_blank()))
+}
+```
+
+```{r step3-table}
+if (!is.null(s3)) knitr::kable(decision_table(s3), digits = 2, row.names = FALSE)
+```
+
+**Choice after step 3:**
+
+```{r step3-choice}
+ref <- modifyList(ref, list(n_pools_GR = 10, n_pools_YS = 10, N_per_pool = 10, n_assay_rafts = 250))   # best guess, not yet chosen: 100 rafts per phenotype as 10 x 10 (more pools won at equal rafts with the Welch test); 250 assayed rafts give ~120 GR rafts
+```
+
+# 8. Step 4: larvae per raft
+
+With the chosen pools, does taking 2 sibs from each of half as many (more extreme)
+rafts beat 1 larva from each raft? A raft's sibs stay in one pool. 2 scenarios (~5 min).
+
+```{r step4-run, eval = RUN_ALL}
+run_step("step4", list(
+  list(label = "1 larva per raft",  changes = list(larvae_per_raft = 1)),
+  list(label = "2 sibs per raft",   changes = list(larvae_per_raft = 2))))
+```
+
+```{r step4-results, fig.width = 10, fig.height = 2.2}
+s4 <- load_step("step4")
+if (!is.null(s4)) print(dot_plot(s4))
+```
+
+```{r step4-table}
+if (!is.null(s4)) knitr::kable(decision_table(s4), digits = 2, row.names = FALSE)
+```
+
+**Choice after step 4:**
+
+```{r step4-choice}
+ref <- modifyList(ref, list(larvae_per_raft = 1))   # placeholder: not yet chosen
+```
+
+# 9. Step 5: Ctrl pools
+
+Ctrl pools from untreated sibs of random rafts (a sample of the whole F8) vs Ctrl
+pools matched to the GR and YS rafts (Ctrl pool j holds a sib of each raft in GR pool
+j, and likewise for YS). 2 scenarios (~5 min).
+
+```{r step5-run, eval = RUN_ALL}
+run_step("step5", list(
+  list(label = "random rafts",           changes = list(ctrl_design = "random")),
+  list(label = "matched to GR / YS rafts", changes = list(ctrl_design = "matched"))))
+```
+
+```{r step5-results, fig.width = 10, fig.height = 2.2}
+s5 <- load_step("step5")
+if (!is.null(s5)) print(dot_plot(s5))
+```
+
+```{r step5-table}
+if (!is.null(s5)) knitr::kable(decision_table(s5), digits = 2, row.names = FALSE)
+```
+
+**Choice after step 5:**
+
+```{r step5-choice}
+ref <- modifyList(ref, list(ctrl_design = "random"))   # placeholder: not yet chosen
+```
+
+# 10. Step 6: depth
+
+Depth mostly changes cost. "Poor AIMs" (one effective informative SNP per window
+instead of 10) is the case where low depth could hurt. 4 scenarios (~10 min).
+
+```{r step6-run, eval = RUN_ALL}
+run_step("step6", list(
+  list(label = "5x",            changes = list(cov_ind = 5)),
+  list(label = "2x",            changes = list(cov_ind = 2)),
+  list(label = "1x",            changes = list(cov_ind = 1)),
+  list(label = "2x, poor AIMs", changes = list(cov_ind = 2, aim_eff = 1))))
+```
+
+```{r step6-results, fig.width = 10, fig.height = 3}
+s6 <- load_step("step6")
+if (!is.null(s6)) print(dot_plot(s6))
+```
+
+```{r step6-table}
+if (!is.null(s6)) knitr::kable(decision_table(s6), digits = 2, row.names = FALSE)
+```
+
+**Choice after step 6:**
+
+```{r step6-choice}
+ref <- modifyList(ref, list(cov_ind = 5))   # placeholder: not yet chosen
+```
+
+# 11. Step 7: check the chosen design
+
+The chosen design under less favourable biology and colony history. The S/r LC50
+rows also check the high dose chosen in step 2: if S/r larvae survive it, GR vs Ctrl
+weakens. The colony rows change the rafts producing F2 to F7 (reference: 200, 80, 100,
+120, 150, 175). 13 scenarios (~20 min).
+
+```{r step7-run, eval = RUN_ALL}
+run_step("step7", list(
+  list(label = "chosen design",             changes = list()),
+  list(label = "green r-allele freq 0.75",  changes = list(p_res_green = 0.75)),
+  list(label = "green r-allele freq 0.5",   changes = list(p_res_green = 0.5)),
+  list(label = "yellow r-allele freq 0.1",  changes = list(p_res_yellow = 0.1)),
+  list(label = "S/r LC50 0.0167 ppm (fully recessive)", changes = list(LC50 = replace(ref$LC50, "RS", 0.0167))),
+  list(label = "S/r LC50 5 ppm",            changes = list(LC50 = replace(ref$LC50, "RS", 5))),
+  list(label = "dose varies x2 per day",    changes = list(dose_day_sd = 0.3)),
+  list(label = "poor AIMs",                 changes = list(aim_eff = 1)),
+  list(label = "unequal families",          changes = list(family_cv = 1)),
+  list(label = "males mate twice",          changes = list(father_ratio = 0.5)),
+  list(label = "fewer F2 rafts (70)",       changes = list(rafts = c(70, 80, 100, 120, 150, 175, F8_RAFTS))),
+  list(label = "bottleneck: 30 rafts at F5", changes = list(rafts = c(F2_RAFTS, 80, 100, 30, 80, 150, F8_RAFTS))),
+  list(label = "slow recovery: 50 rafts F3-F7", changes = list(rafts = c(F2_RAFTS, 50, 50, 50, 50, 50, F8_RAFTS)))))
+```
+
+```{r step7-results, fig.width = 10, fig.height = 5.5}
+s7 <- load_step("step7")
+if (!is.null(s7)) print(dot_plot(s7))
+```
+
+```{r step7-table}
+if (!is.null(s7)) knitr::kable(decision_table(s7), digits = 2, row.names = FALSE)
+```
+
+# 12. Step 8: third dose arm and modifiers
+
+Would adding a third arm to the chosen design find a modifier locus that the two-dose
+design misses? The third arm adds 40 larvae per raft at an intermediate dose (the S/r
+LC50) and 5 + 5 pools of survivors (MS) and dead (MD). A modifier on chr3 (40 cM)
+changes survival by an odds ratio per allele; "founders 1/0" means green and yellow
+are fixed for different alleles. 6 scenarios (~10 min).
+
+```{r step8-run, eval = RUN_ALL}
+s8_scen <- list()
+for (fd in list(c(0.8, 0.2), c(1, 0))) for (OR in c(3, 5, 10))
+  s8_scen[[length(s8_scen) + 1]] <- list(
+    label   = paste0("OR ", OR, ", founders ", fd[1], "/", fd[2]),
+    changes = list(n_mid = 40, mod_OR = OR, mod_p_green = fd[1], mod_p_yellow = fd[2]))
+run_step("step8", s8_scen)
+```
+
+```{r step8-results, fig.width = 9, fig.height = 3.8}
+s8 <- load_step("step8")
+if (!is.null(s8)) {
+  s8$founders <- paste0("Founders green ", s8$mod_p_green, " / yellow ", s8$mod_p_yellow)
+  print(ggplot(s8, aes(mod_OR, power_mod, colour = contrast_name, shape = contrast_name)) +
+    geom_hline(yintercept = 0.8, linetype = 3, colour = "grey50") +
+    geom_line() + geom_point(size = 2.5) +
+    scale_colour_manual(values = c(unname(pal_dark), "grey40"), name = NULL) +
+    scale_shape_discrete(name = NULL) +
+    scale_x_log10(breaks = c(3, 5, 10)) +
+    facet_wrap(~ founders) + expand_limits(y = c(0, 1)) +
+    labs(x = "Modifier effect (odds ratio on survival per allele)", y = "Power for the modifier",
+         subtitle = "Dotted line: 0.8 power") +
+    theme_bw() + theme(panel.grid.minor = element_blank(), legend.position = "bottom"))
+}
+```
+
+```{r step8-table}
+if (!is.null(s8)) knitr::kable(
+  reshape(s8[, c("label", "contrast", "power_mod")], idvar = "label", timevar = "contrast", direction = "wide"),
+  digits = 2, row.names = FALSE)
+```
+
+The third arm's extra cost is the difference between `cost_usd` here (with the
+third arm) and the chosen design's cost in step 7.
+
+# 13. Chosen design
+
+```{r chosen}
+str(ref[c("dose_high", "dose_low", "n_assay_rafts", "n_high", "n_low",
+          "n_pools_GR", "n_pools_YS", "N_per_pool", "cov_ind")])
+```
+
+# 14. Not modelled
+
+- One MAL plus, in step 8 only, one modifier locus.
+- Ancestry is estimated per window from `aim_eff` effective informative SNPs; an
+  HMM-based estimate (e.g. Ancestry_HMM) would borrow information across windows.
+- Map lengths are placeholders from *Cx. quinquefasciatus*; the S/r LC50 and F2 raft
+  number are placeholders until the F2 pilot.
