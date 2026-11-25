@@ -1,17 +1,20 @@
 LSPH admixture mapping: Power simulation
 ================
 Norah Saarman
-2026-11-24
+2026-11-25
 
 - [1. What this simulates](#1-what-this-simulates)
-- [2. Baseline parameters](#2-baseline-parameters)
+- [2. Reference design](#2-reference-design)
 - [3. Meiosis](#3-meiosis)
 - [4. One replicate](#4-one-replicate)
 - [5. Look at one replicate](#5-look-at-one-replicate)
 - [6. Scenarios](#6-scenarios)
 - [7. Run](#7-run)
 - [8. Results](#8-results)
-  - [Signal at the MAL](#signal-at-the-mal)
+  - [Which design levers matter](#which-design-levers-matter)
+  - [What sequencing money buys](#what-sequencing-money-buys)
+  - [Robustness: things we don’t control, and the F2
+    pilot](#robustness-things-we-dont-control-and-the-f2-pilot)
   - [Diagnostics: shift, localization, pool filling,
     cost](#diagnostics-shift-localization-pool-filling-cost)
   - [Doses × heterozygote response (panels H and
@@ -26,12 +29,15 @@ Norah Saarman
 - [10. Assumptions and
   not-yet-modelled](#10-assumptions-and-not-yet-modelled)
 
-RStudio Configuration: - **R version:** R 4.4.0 (Geospatial packages) -
-**Number of cores:** 16 - **Memory:** 32 GB - **Time:** the full run
-takes a few hours at 0.25 cM windows - **Account:** saarman-np -
-**Partition:** saarman-np
-
-Cores available to this session: 16.
+RStudio Configuration:  
+- **R version:** R 4.4.0 (Geospatial packages)  
+- **Number of cores:** 28 (of 32 max, leaving some for others)  
+- **Memory:** 96 GB (about 2.5 GB per core + 4 GB; at 16 cores, 32 GB
+was too little and workers were killed)  
+- **Time:** the full run (107 scenarios) takes about 2.5 hours at 28
+cores  
+- **Account:** saarman-np  
+- **Partition:** saarman-np
 
 # 1. What this simulates
 
@@ -51,42 +57,49 @@ One replicate runs these steps:
 2.  **Colony F2 to F8:** each generation is made of *R* egg rafts. Each
     raft is one mother and one father, both drawn from random families
     of the previous generation, so Ne is about 2R.
-3.  **Bioassay at F8:** each assayed raft gives 50 larvae at the high
-    (green) dose, 50 at the low (yellow) dose, plus untreated controls.
-    Mortality follows probit dose-response curves for each genotype at a
-    hypothetical major-effect locus (MAL), fitted to the parental
-    bioassays, with day-to-day and raft-to-raft variation. Whether such
-    a locus exists is what the study tests.
-4.  **Pools, as in the plan:** one larva per raft per phenotype. **GR**
-    = survivors at the high dose, from the most resistant rafts. **YS**
-    = dead at the low dose, from the most susceptible rafts. **Paired
-    controls** = for every GR and YS pool, a control pool of untreated
-    sibs from exactly the same rafts.
+3.  **Bioassay at F8:** each assayed raft gives 40 larvae at the high
+    (green) dose, 40 at the low (yellow) dose, 40 at an intermediate
+    dose (the S/r LC50), plus untreated controls. Mortality follows
+    probit dose-response curves for each genotype at a hypothetical
+    major-effect locus (MAL), fitted to the parental bioassays, with
+    day-to-day and raft-to-raft variation. Whether such a locus exists
+    is what the study tests.
+4.  **Pools, as in the plan:** one larva per raft per phenotype (block O
+    tries two). **GR** = survivors at the high dose, from the most
+    resistant rafts. **YS** = dead at the low dose, from the most
+    susceptible rafts. **MS / MD** = survivors / dead at the
+    intermediate dose (third arm, aimed at modifiers). **Ctrl** =
+    untreated sibs, one per raft. By default from randomly chosen
+    assayed rafts, so the Ctrl pools are a random sample of the whole
+    F8, with as many Ctrl pools as GR + YS pools (fewer pools of full
+    size if rafts run short). Block M compares this with Ctrl pools
+    matched to the GR and YS rafts: kept separate (pools of 20), kept
+    separate plus intermediate Ctrl pools from the rafts in neither GR
+    nor YS, or merged (GR pool j + YS pool j, pools of 40).
 5.  **Sequencing:** each pool’s green ancestry is the DNA-weighted mean
     of its 2N chromosomes, plus read-sampling error (depth × how
     informative the ancestry-informative SNPs are).
 6.  **Scan:** pool-level ancestry compared window by window, with
     replicate pools as the units. GR vs YS (Welch t) is the discovery
-    scan. GR and YS vs their paired sib pools (paired t) test selection
-    *within* families, which family structure cannot explain. Sibs of GR
-    rafts vs sibs of YS rafts (Welch t) test selection *between*
-    families.
+    scan. GR vs Ctrl and YS vs Ctrl (Welch t) show which arm moved away
+    from the Ctrl pools, which is how dominance is inferred.
 
 Each design is also run with **null replicates**, where survival does
 not depend on genotype. The 95th percentile of the null genome-wide
 maximum −log10(p) is that design’s threshold, so every power estimate is
 at a true 5% genome-wide false-positive rate.
 
-# 2. Baseline parameters
+# 2. Reference design
 
-The baseline is the current F8 plan. Values marked *placeholder* should
-be replaced with real numbers.
+The reference design (`base` in the code) is the set of values every
+scenario starts from; each scenario changes one or a few of them. Values
+marked *placeholder* should be replaced with real numbers.
 
 ``` r
-F2_RAFTS <- 70    # placeholder: number of egg rafts producing F2
+F2_RAFTS <- 200   # placeholder: number of egg rafts producing F2 (first F1 blood meal went well, Nov 2026)
 F8_RAFTS <- 300   # rafts produced at F8 (the assay rafts are drawn from these)
 
-base <- list(
+base <- list(   # the reference design: every scenario starts from these values
   ## Genome (placeholders: set from a Culex linkage map)
   ## idCulPipi1.1 physical sizes: chr1 128.5, chr2 213.1, chr3 190.9 Mb (533 Mb total)
   chrom_cM  = c(chr1 = 30, chr2 = 89, chr3 = 66),  # published Cx. quinquefasciatus map (likely an underestimate)
@@ -102,7 +115,8 @@ base <- list(
   LC50         = c(SS = 0.0167, RS = 0.2, RR = 249),
   probit_slope = c(SS = 3.70,   RS = 3.4, RR = 3.15),   # probits per log10(ppm), from LC90/LC50
   dose_high = 250,    # ppm, high (green) dose
-  dose_low  = 0.02,   # ppm, low (yellow) dose
+  dose_low  = 0.01,   # ppm, low (yellow) dose (holds under all four S/r LC50 hypotheses, panel I)
+  dose_mid  = 0.2,    # ppm, third (intermediate) arm at the S/r LC50 (placeholder until the F2 pilot)
   batch_sd  = 0.15,   # day-to-day shift in effective dose, log10 units (~x1.4), each arm separately
   raft_sd   = 0.5,    # raft-to-raft variation in mortality, probit units (same raft effect in both arms)
   ## Extra loci (modifiers or additional major loci): NULL = none, or a data.frame with
@@ -126,9 +140,14 @@ base <- list(
   rafts  = c(F2_RAFTS, 80, 100, 120, 150, 175, F8_RAFTS),  # rafts producing F2..F8
   n_assay_rafts = 200,  # F8 rafts bioassayed
   f_hidden_sib  = 0,    # fraction of assay rafts that are 2nd-blood-meal full sibs
-  n_high = 50, n_low = 50,
+  n_high = 40, n_low = 40, n_mid = 40,   # larvae per raft at the high, low and intermediate dose (n_mid = 0: no third arm)
   N_per_pool = 20,
-  n_pools_GR = 5, n_pools_YS = 5,   # each GR and YS pool has a paired control pool of untreated sibs
+  n_pools_GR = 5, n_pools_YS = 5,   # plus as many Ctrl pools (one untreated sib per raft)
+  n_pools_MS = 5, n_pools_MD = 5,   # third arm: survivors (MS) and dead (MD) at the intermediate dose
+  larvae_per_raft = 1,              # larvae per raft in each treatment pool type (sibs; >1 uses fewer, more extreme rafts)
+  ctrl_design = "random",           # Ctrl sibs from: "random" rafts; "matched" to each GR/YS pool (pools of 20);
+                                    # "matched_plus" = matched + intermediate Ctrl from rafts in neither GR nor YS;
+                                    # "matched_merged" (GR j + YS j sibs together, pools of 40)
   cov_ind = 5,          # sequencing depth per individual
 
   ## Cost (USD)
@@ -249,10 +268,10 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
   ## hidden full sibs = a second raft from the same mother (and father)
   assay <- if (A > n_unique) c(uni, uni[sample.int(n_unique, A - n_unique, replace = TRUE)]) else uni
 
-  n_c <- 2                                     # untreated sibs per raft (a raft can feed both GR and YS)
-  n_per_raft <- p$n_high + p$n_low + n_c
+  n_c <- 2                                     # untreated sibs per raft for Ctrl (2: a raft in both GR and YS gives one to each)
+  n_per_raft <- p$n_high + p$n_low + p$n_mid + n_c
   raft_of <- rep(1:A, each = n_per_raft)
-  type <- rep(c(rep("H", p$n_high), rep("L", p$n_low), rep("C", n_c)), times = A)
+  type <- rep(c(rep("H", p$n_high), rep("L", p$n_low), rep("M", p$n_mid), rep("C", n_c)), times = A)
 
   gm <- meiosis(geno, mom[assay][raft_of], map)   # every larva's maternal gamete
   gf <- meiosis(geno, dad[assay][raft_of], map)   # ... and paternal gamete
@@ -261,9 +280,11 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
   ## probit dose-response by MAL genotype, with a day shift per arm and a raft effect
   shift_H <- rnorm(1, 0, p$batch_sd)
   shift_L <- rnorm(1, 0, p$batch_sd)
+  shift_M <- rnorm(1, 0, p$batch_sd)
   raft_eff <- rnorm(A, 0, p$raft_sd)[raft_of]
   log_dose <- ifelse(type == "H", log10(p$dose_high) + shift_H,
-              ifelse(type == "L", log10(p$dose_low)  + shift_L, NA))
+              ifelse(type == "L", log10(p$dose_low)  + shift_L,
+              ifelse(type == "M", log10(p$dose_mid)  + shift_M, NA)))
   z <- p$probit_slope[n_res + 1] * (log_dose - log10(p$LC50[n_res + 1])) + raft_eff
   surv <- 1 - pnorm(z)                         # NA for untreated controls
   if (n_x > 0) {
@@ -278,36 +299,72 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
   if (null) surv[type != "C"] <- p$null_surv
   alive <- runif(length(surv)) < surv
 
-  isH <- type == "H"; isL <- type == "L"
+  isH <- type == "H"; isL <- type == "L"; isM <- type == "M"
   survH <- as.numeric(tapply(alive[isH], raft_of[isH], mean))    # per raft
   mortL <- as.numeric(tapply(!alive[isL], raft_of[isL], mean))
+  survM <- if (p$n_mid > 0) as.numeric(tapply(alive[isM], raft_of[isM], mean)) else NULL
 
-  ## ---- Step 4. Choose larvae for pools (one per raft per phenotype) -------
-  pick <- list()
-  ## GR: a survivor from each of the most resistant rafts
-  cand <- which(survH > 0)
-  use_GR <- head(cand[order(-survH[cand], runif(length(cand)))], p$n_pools_GR * p$N_per_pool)
-  ok   <- which(isH & alive %in% TRUE)
-  pick$GR <- vapply(use_GR, function(r) { v <- ok[raft_of[ok] == r]; v[sample.int(length(v), 1)] }, integer(1))
-  ## YS: a dead larva from each of the most susceptible rafts
-  cand <- which(mortL > 0)
-  use_YS <- head(cand[order(-mortL[cand], runif(length(cand)))], p$n_pools_YS * p$N_per_pool)
-  ok   <- which(isL & alive %in% FALSE)
-  pick$YS <- vapply(use_YS, function(r) { v <- ok[raft_of[ok] == r]; v[sample.int(length(v), 1)] }, integer(1))
-  ## Paired controls: an untreated sib from the same raft as each GR and each YS larva
-  ## (row 1 of C_by_raft for GR sibs, row 2 for YS sibs, so a raft in both gives two sibs)
+  ## ---- Step 4. Choose larvae for pools ------------------------------------------
+  ## Each treatment pool type takes larvae_per_raft larvae with the wanted outcome from
+  ## each of the most extreme rafts; a raft's larvae always go into the same pool.
+  k <- p$larvae_per_raft
+  pick_arm <- function(is_arm, want_alive, score, n_pools) {
+    n_ok <- as.numeric(tapply(alive[is_arm] == want_alive, raft_of[is_arm], sum))  # per raft
+    cand <- which(n_ok >= k)
+    use  <- head(cand[order(-score[cand], runif(length(cand)))], ceiling(n_pools * p$N_per_pool / k))
+    ok   <- which(is_arm & alive %in% want_alive)
+    larv <- as.integer(unlist(lapply(use, function(r) { v <- ok[raft_of[ok] == r]; v[sample.int(length(v), k)] })))
+    pool_raft <- sample(rep(1:n_pools, length.out = length(use)))        # pool of each raft
+    list(use = use, larv = larv, pool = rep(pool_raft, each = k), pool_raft = pool_raft)
+  }
+  pick <- list(); pool_of <- list()
+  arm <- pick_arm(isH, TRUE, survH, p$n_pools_GR)      # GR: survivors, most resistant rafts
+  use_GR <- arm$use; pick$GR <- arm$larv; pool_of$GR <- arm$pool; raftpool_GR <- arm$pool_raft
+  arm <- pick_arm(isL, FALSE, mortL, p$n_pools_YS)     # YS: dead, most susceptible rafts
+  use_YS <- arm$use; pick$YS <- arm$larv; pool_of$YS <- arm$pool; raftpool_YS <- arm$pool_raft
+
+  ## Third arm (intermediate dose): MS = survivors from the rafts with the highest survival
+  ## there, MD = dead larvae from the rafts with the lowest
+  if (p$n_mid > 0) {
+    arm <- pick_arm(isM, TRUE,  survM,     p$n_pools_MS); pick$MS <- arm$larv; pool_of$MS <- arm$pool
+    arm <- pick_arm(isM, FALSE, 1 - survM, p$n_pools_MD); pick$MD <- arm$larv; pool_of$MD <- arm$pool
+  }
+
+  ## Ctrl: untreated sibs, one per raft, built in one of three ways (p$ctrl_design)
   C_by_raft <- matrix(which(type == "C"), nrow = n_c)    # column = raft
-  pick$ctrlGR <- C_by_raft[1, use_GR]
-  pick$ctrlYS <- C_by_raft[2, use_YS]
-
-  ## Pool labels: each paired control pool holds the sibs of the matching treatment pool
-  pool_of <- list(GR = sample(rep(1:p$n_pools_GR, length.out = length(pick$GR))),
-                  YS = sample(rep(1:p$n_pools_YS, length.out = length(pick$YS))))
-  pool_of$ctrlGR <- pool_of$GR
-  pool_of$ctrlYS <- pool_of$YS
+  if (p$ctrl_design == "random") {
+    ## random assayed rafts, regardless of phenotype: a random sample of the whole F8.
+    ## Never more Ctrl pools than GR + YS pools; if rafts run short, fewer pools of full size.
+    n_pools_ctrl <- min(p$n_pools_GR + p$n_pools_YS, floor(A / p$N_per_pool))
+    pick$ctrl    <- C_by_raft[1, sample.int(A, n_pools_ctrl * p$N_per_pool)]
+    pool_of$ctrl <- sample(rep(1:n_pools_ctrl, length.out = length(pick$ctrl)))
+  } else {
+    ## matched: Ctrl pool j holds a sib from each raft in GR pool j, and likewise for YS.
+    ## "matched" keeps GR- and YS-matched Ctrl pools separate (pools of 20);
+    ## "matched_plus" adds intermediate Ctrl pools: one sib from each assayed raft in
+    ##   neither GR nor YS (full pools only), so all Ctrl pools together cover the whole F8;
+    ## "matched_merged" puts GR pool j's and YS pool j's sibs in one pool (pools of 40).
+    pick$ctrl <- c(C_by_raft[1, use_GR], C_by_raft[2, use_YS])
+    if (p$ctrl_design == "matched_merged") {
+      n_pools_ctrl <- max(p$n_pools_GR, p$n_pools_YS)
+      pool_of$ctrl <- c(raftpool_GR, raftpool_YS)
+    } else {
+      n_pools_ctrl <- p$n_pools_GR + p$n_pools_YS
+      pool_of$ctrl <- c(raftpool_GR, p$n_pools_GR + raftpool_YS)
+    }
+    if (p$ctrl_design == "matched_plus") {
+      left  <- setdiff(1:A, c(use_GR, use_YS))              # rafts in neither GR nor YS
+      n_int <- floor(length(left) / p$N_per_pool)           # full intermediate Ctrl pools
+      if (n_int > 0) {
+        pick$ctrl    <- c(pick$ctrl, C_by_raft[1, left[sample.int(length(left), n_int * p$N_per_pool)]])
+        pool_of$ctrl <- c(pool_of$ctrl, n_pools_ctrl + rep(1:n_int, length.out = n_int * p$N_per_pool))
+        n_pools_ctrl <- n_pools_ctrl + n_int
+      }
+    }
+  }
 
   ## ---- Step 5. Pool and "sequence" -------------------------------------------
-  n_pools <- c(GR = p$n_pools_GR, YS = p$n_pools_YS, ctrlGR = p$n_pools_GR, ctrlYS = p$n_pools_YS)
+  n_pools <- c(GR = p$n_pools_GR, YS = p$n_pools_YS, ctrl = n_pools_ctrl, MS = p$n_pools_MS, MD = p$n_pools_MD)
   dna_w <- if (p$dna_cv > 0) rgamma(length(raft_of), 1 / p$dna_cv^2, 1) else rep(1, length(raft_of))
   est <- list()
   for (ph in names(pick)) {
@@ -326,8 +383,6 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
       rbinom(length(true_freq), n_eff, pmin(pmax(true_freq, 0), 1)) / n_eff
     }))
   }
-  ## all control pools combined (for comparisons against a family-balanced baseline)
-  if (!is.null(est$ctrlGR) && !is.null(est$ctrlYS)) est$ctrl <- rbind(est$ctrlGR, est$ctrlYS)
 
   ## ---- Step 6. Scan: Welch t-test between pool types, per window ------------
   locus_chrs <- unique(c(p$causal_chr, X$chr))
@@ -337,25 +392,19 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
 
   out <- data.frame(null = null)
   mlp_all <- list()
-  ## Contrasts: pool type 1, pool type 2, test
-  ##   GR_YS        survivors (high dose) vs dead (low dose)            Welch
-  ##   GR_pair      GR vs untreated sibs from the same rafts, by pool    paired t (within families)
-  ##   YS_pair      YS vs untreated sibs from the same rafts, by pool    paired t (within families)
-  ##   GRsib_YSsib  sibs of GR rafts vs sibs of YS rafts                 Welch (between families)
-  ##   GR_ctrl      GR vs all control pools combined                    Welch
-  ##   YS_ctrl      YS vs all control pools combined                    Welch
-  contrasts <- list(GR_YS = c("GR", "YS", "welch"),     GR_pair = c("GR", "ctrlGR", "paired"),
-                    YS_pair = c("YS", "ctrlYS", "paired"), GRsib_YSsib = c("ctrlGR", "ctrlYS", "welch"),
-                    GR_ctrl = c("GR", "ctrl", "welch"),    YS_ctrl = c("YS", "ctrl", "welch"))
+  ## Contrasts (Welch t on pool ancestry, pools as replicates):
+  ##   GR_YS    survivors (high dose) vs dead (low dose): discovery
+  ##   GR_ctrl  GR vs Ctrl: moves if resistance is recessive
+  ##   YS_ctrl  YS vs Ctrl: moves if resistance is dominant
+  ##   MS_MD    survivors vs dead at the intermediate dose (third arm; aimed at modifiers)
+  ##   MS_ctrl, MD_ctrl  each third-arm pool type vs Ctrl
+  contrasts <- list(GR_YS = c("GR", "YS"), GR_ctrl = c("GR", "ctrl"), YS_ctrl = c("YS", "ctrl"),
+                    MS_MD = c("MS", "MD"), MS_ctrl = c("MS", "ctrl"), MD_ctrl = c("MD", "ctrl"))
   for (cn in names(contrasts)) {
     Xp <- est[[contrasts[[cn]][1]]]
     Yp <- est[[contrasts[[cn]][2]]]
     if (is.null(Xp) || is.null(Yp) || nrow(Xp) < 2 || nrow(Yp) < 2) {
       mlp <- rep(NA_real_, length(chr_of))
-    } else if (contrasts[[cn]][3] == "paired") {
-      dd <- Xp - Yp                                    # pool j minus its paired control pool j
-      tt <- colMeans(dd) / pmax(apply(dd, 2, sd) / sqrt(nrow(dd)), 1e-8)
-      mlp <- -(log(2) + pt(-abs(tt), nrow(dd) - 1, log.p = TRUE)) / log(10)
     } else {
       vx <- apply(Xp, 2, var) / nrow(Xp)
       vy <- apply(Yp, 2, var) / nrow(Yp)
@@ -379,11 +428,14 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
   ## diagnostics
   anc_at_locus <- function(larv) mean(hap_green[c(gm[[p$causal_chr]][larv, i_causal],
                                                   gf[[p$causal_chr]][larv, i_causal])])
-  out$delta_anc_GR_ctrl <- anc_at_locus(pick$GR) - anc_at_locus(c(pick$ctrlGR, pick$ctrlYS))
-  out$delta_anc_GR_pair <- anc_at_locus(pick$GR) - anc_at_locus(pick$ctrlGR)
+  out$delta_anc_GR_ctrl <- anc_at_locus(pick$GR) - anc_at_locus(pick$ctrl)
   out$res_freq_final <- mean(hap_res[geno[[p$causal_chr]][, , i_causal]])
   out$drift_sd       <- if (!is.null(est$ctrl)) sd(colMeans(est$ctrl)) else NA
-  out$n_GR <- length(pick$GR); out$n_YS <- length(pick$YS); out$n_ctrl <- length(pick$ctrlGR) + length(pick$ctrlYS)
+  out$n_GR <- length(pick$GR); out$n_YS <- length(pick$YS); out$n_ctrl <- length(pick$ctrl)
+  out$n_MS <- length(pick$MS); out$n_MD <- length(pick$MD)
+  out$n_pools_ctrl <- n_pools_ctrl
+  out$n_rafts_both    <- length(intersect(use_GR, use_YS))      # rafts giving both a GR and a YS larva
+  out$n_rafts_neither <- A - length(union(use_GR, use_YS))      # assayed rafts in neither GR nor YS
   for (v in names(out)) if (is.numeric(out[[v]]) && !is.finite(out[[v]])) out[[v]] <- NA
 
   if (keep) return(list(summary = out, mlp = mlp_all, est = est, chr = chr_of, pos = pos_of))
@@ -403,7 +455,7 @@ knitr::kable(t(round(unlist(demo$summary[, c("delta_anc_GR_ctrl", "res_freq_fina
 
 | delta_anc_GR_ctrl | res_freq_final | drift_sd | n_GR | n_YS | n_ctrl | GR_ctrl_causal | GR_ctrl_genome |
 |------------------:|---------------:|---------:|-----:|-----:|-------:|---------------:|---------------:|
-|             0.608 |          0.342 |    0.053 |   72 |  100 |    172 |          7.717 |          7.717 |
+|             0.468 |          0.497 |    0.035 |  100 |  100 |    200 |          7.883 |          7.883 |
 
 ``` r
 par(mfrow = c(2, 1), mar = c(4, 4, 2, 1))
@@ -422,12 +474,13 @@ abline(v = base$causal_cM, lty = 2)
 
 # 6. Scenarios
 
-We vary **one thing at a time** from the baseline in panels A–G (design)
-and J (things we can’t control). Panels H and I cross each high or low
-dose with four possible heterozygote responses, because the best dose
-depends on a response the F2 pilot will measure. Panels A–J have a
-single resistance locus (the MAL); panel K adds a modifier of increasing
-strength on chr3.
+We vary **one thing at a time** from the reference design in panels A–G
+(design) and J (things we can’t control). Panels H and I cross each high
+or low dose with four possible heterozygote responses, because the best
+dose depends on a response the F2 pilot will measure. Panel K adds a
+modifier of increasing strength on chr3 to the MAL. Panels L–N pair
+levers, compare ways of building the Ctrl pools, and vary larvae per
+dose per raft.
 
 ``` r
 scenarios <- list(
@@ -446,7 +499,7 @@ scenarios <- list(
   list(block = "B. F8 rafts assayed", label = "200", changes = list(n_assay_rafts = 200)),
   list(block = "B. F8 rafts assayed", label = "300", changes = list(n_assay_rafts = 300)),
 
-  ## C. Pools per phenotype (each with a paired control pool)
+  ## C. Pools per phenotype (Ctrl pools = GR + YS pools)
   list(block = "C. Pools per phenotype", label = "3",  changes = list(n_pools_GR = 3,  n_pools_YS = 3)),
   list(block = "C. Pools per phenotype", label = "5",  changes = list(n_pools_GR = 5,  n_pools_YS = 5)),
   list(block = "C. Pools per phenotype", label = "8",  changes = list(n_pools_GR = 8,  n_pools_YS = 8)),
@@ -471,10 +524,13 @@ scenarios <- list(
   list(block = "F. Second blood meal", label = "200 independent",      changes = list(n_assay_rafts = 200, f_hidden_sib = 0)),
 
   ## G. F2 pilot vs F8
-  list(block = "G. F2 pilot vs F8", label = "F2 pilot 3+3 pools",
-       changes = list(n_gen = 2, rafts = F2_RAFTS, n_assay_rafts = min(F2_RAFTS, 60),
-                      n_pools_GR = 3, n_pools_YS = 3)),
-  list(block = "G. F2 pilot vs F8", label = "F8 baseline", changes = list()),
+  list(block = "G. F2 pilot vs F8", label = "F2 pilot 3+3 pools, 100 rafts",
+       changes = list(n_gen = 2, rafts = F2_RAFTS, n_assay_rafts = min(F2_RAFTS, 100),
+                      n_pools_GR = 3, n_pools_YS = 3, n_mid = 0)),
+  list(block = "G. F2 pilot vs F8", label = "F2 pilot 3+3 pools, 200 rafts",
+       changes = list(n_gen = 2, rafts = F2_RAFTS, n_assay_rafts = min(F2_RAFTS, 200),
+                      n_pools_GR = 3, n_pools_YS = 3, n_mid = 0)),
+  list(block = "G. F2 pilot vs F8", label = "F8 reference design", changes = list()),
 
   ## J. Sensitivity: things we don't control
   list(block = "J. Sensitivity", label = "p_res green 0.5",   changes = list(p_res_green = 0.5)),
@@ -484,24 +540,52 @@ scenarios <- list(
   list(block = "J. Sensitivity", label = "dose varies x2/day", changes = list(batch_sd = 0.3)),
   list(block = "J. Sensitivity", label = "poor AIMs",         changes = list(aim_eff = 1)),
   list(block = "J. Sensitivity", label = "males mate 2",      changes = list(father_ratio = 0.5)),
-  list(block = "J. Sensitivity", label = "unequal families",  changes = list(family_cv = 1))
+  list(block = "J. Sensitivity", label = "unequal families",  changes = list(family_cv = 1)),
+
+  ## L. Combinations of levers
+  list(block = "L. Combinations", label = "8 pools, 2x",              changes = list(n_pools_GR = 8, n_pools_YS = 8, cov_ind = 2)),
+  list(block = "L. Combinations", label = "5 pools, 2x, poor AIMs",   changes = list(cov_ind = 2, aim_eff = 1)),
+  list(block = "L. Combinations", label = "8 pools, 2x, poor AIMs",   changes = list(n_pools_GR = 8, n_pools_YS = 8, cov_ind = 2, aim_eff = 1)),
+  list(block = "L. Combinations", label = "8 pools, 300 rafts",       changes = list(n_pools_GR = 8, n_pools_YS = 8, n_assay_rafts = 300)),
+  list(block = "L. Combinations", label = "10 pools, 300 rafts",      changes = list(n_pools_GR = 10, n_pools_YS = 10, n_assay_rafts = 300)),
+
+  ## M. How the Ctrl pools are built (see ctrl_design in the reference design)
+  list(block = "M. Ctrl design", label = "random, 200 rafts",          changes = list(ctrl_design = "random")),
+  list(block = "M. Ctrl design", label = "matched, 200 rafts",         changes = list(ctrl_design = "matched")),
+  list(block = "M. Ctrl design", label = "matched + intermediate, 200 rafts", changes = list(ctrl_design = "matched_plus")),
+  list(block = "M. Ctrl design", label = "matched merged, 200 rafts",  changes = list(ctrl_design = "matched_merged")),
+  list(block = "M. Ctrl design", label = "random, 300 rafts",          changes = list(ctrl_design = "random", n_assay_rafts = 300)),
+  list(block = "M. Ctrl design", label = "matched, 300 rafts",         changes = list(ctrl_design = "matched", n_assay_rafts = 300)),
+  list(block = "M. Ctrl design", label = "matched + intermediate, 300 rafts", changes = list(ctrl_design = "matched_plus", n_assay_rafts = 300)),
+  list(block = "M. Ctrl design", label = "matched merged, 300 rafts",  changes = list(ctrl_design = "matched_merged", n_assay_rafts = 300)),
+
+  ## N. Larvae per dose per raft (all three arms), and no third arm
+  list(block = "N. Larvae per dose per raft", label = "30 per dose", changes = list(n_high = 30, n_low = 30, n_mid = 30)),
+  list(block = "N. Larvae per dose per raft", label = "40 per dose", changes = list()),
+  list(block = "N. Larvae per dose per raft", label = "50 per dose", changes = list(n_high = 50, n_low = 50, n_mid = 50)),
+  list(block = "N. Larvae per dose per raft", label = "40, no third arm", changes = list(n_mid = 0)),
+
+  ## O. Sibs per raft in the treatment pools: 1 larva from each of the most extreme rafts,
+  ##    or 2 from each of half as many (more extreme, but sibs are correlated)
+  list(block = "O. Larvae per raft in pools", label = "5 pools, 1 per raft",  changes = list()),
+  list(block = "O. Larvae per raft in pools", label = "5 pools, 2 per raft",  changes = list(larvae_per_raft = 2)),
+  list(block = "O. Larvae per raft in pools", label = "8 pools, 1 per raft",  changes = list(n_pools_GR = 8,  n_pools_YS = 8)),
+  list(block = "O. Larvae per raft in pools", label = "8 pools, 2 per raft",  changes = list(n_pools_GR = 8,  n_pools_YS = 8, larvae_per_raft = 2)),
+  list(block = "O. Larvae per raft in pools", label = "10 pools, 1 per raft", changes = list(n_pools_GR = 10, n_pools_YS = 10)),
+  list(block = "O. Larvae per raft in pools", label = "10 pools, 2 per raft", changes = list(n_pools_GR = 10, n_pools_YS = 10, larvae_per_raft = 2))
 )
 
-## K. Modifier on chr3 (40 cM), on top of the MAL: effect size x dose x founder differentiation.
+## K. Modifier on chr3 (40 cM), on top of the MAL: effect size x founder differentiation.
 ## OR = odds ratio on survival per modifier allele (OR 10 is close to a second major locus).
-## "intermediate" = high dose set at the MAL heterozygote LC50, so heterozygotes partly survive.
 ## "founders 1/0" = best case: modifier fixed for different alleles in green and yellow.
+## Scored in GR vs YS and in the third arm (survivors vs dead at the intermediate dose).
 for (founders in c("0.8/0.2", "1/0")) {
-  for (dose in c("current", "intermediate")) {
-    for (OR in c(3, 5, 10)) {
-      ch <- list(extra_loci = data.frame(chr = "chr3", cM = 40, OR = OR,
-                                         p_green  = if (founders == "1/0") 1 else 0.8,
-                                         p_yellow = if (founders == "1/0") 0 else 0.2))
-      if (dose == "intermediate") ch$dose_high <- base$LC50[["RS"]]
-      scenarios[[length(scenarios) + 1]] <- list(
-        block = "K. Modifier", label = paste0("OR ", OR, " | ", dose, " dose | founders ", founders),
-        changes = ch)
-    }
+  for (OR in c(3, 5, 10)) {
+    scenarios[[length(scenarios) + 1]] <- list(
+      block = "K. Modifier", label = paste0("OR ", OR, " | founders ", founders),
+      changes = list(extra_loci = data.frame(chr = "chr3", cM = 40, OR = OR,
+                                             p_green  = if (founders == "1/0") 1 else 0.8,
+                                             p_yellow = if (founders == "1/0") 0 else 0.2)))
   }
 }
 
@@ -524,7 +608,7 @@ for (RS in RS_hyp) {
 length(scenarios)
 ```
 
-    ## [1] 89
+    ## [1] 107
 
 # 7. Run
 
@@ -534,11 +618,39 @@ For each scenario: `N_REP` replicates with the real effect, plus
 results together with the parameters and code used, and the load chunk
 below warns if any of those have changed since.
 
+Before the full run, check that every scenario runs (one real and one
+null replicate each) and that pools are built with the intended sizes.
+Takes a few minutes; nothing is saved.
+
+``` r
+chk <- mclapply(scenarios, function(s) tryCatch({
+  p <- modifyList(base, s$changes)
+  simulate_replicate(p); simulate_replicate(p, null = TRUE); "ok"
+}, error = function(e) conditionMessage(e)), mc.cores = N_CORES, mc.preschedule = FALSE)
+names(chk) <- sapply(scenarios, function(s) paste(s$block, s$label))
+## NULL = the worker was killed (usually out of memory), not an R error
+chk <- lapply(chk, function(v) if (is.null(v)) "worker killed (out of memory?)" else v)
+table(unlist(chk))
+chk[unlist(chk) != "ok"]   # scenarios that failed, with the error
+
+## Pool sizes as intended?
+## Reference design: n_GR, n_YS, n_MS, n_MD ~100; n_ctrl 200 in 10 pools; n_rafts_both = n_rafts_neither
+x <- simulate_replicate(base)
+x[c("n_GR", "n_YS", "n_ctrl", "n_pools_ctrl", "n_MS", "n_MD", "n_rafts_both", "n_rafts_neither")]
+## Matched + intermediate Ctrl at 300 rafts: ~100+ rafts in neither list, ~15 Ctrl pools
+y <- simulate_replicate(modifyList(base, list(ctrl_design = "matched_plus", n_assay_rafts = 300)))
+y[c("n_ctrl", "n_pools_ctrl", "n_rafts_neither")]
+## 2 larvae per raft: each ~100 (lower = too few rafts with 2 larvae of that outcome)
+z <- simulate_replicate(modifyList(base, list(larvae_per_raft = 2)))
+z[c("n_GR", "n_YS", "n_MS", "n_MD")]
+```
+
 ``` r
 cores <- if (.Platform$OS.type == "windows") 1 else N_CORES
 
 t0 <- Sys.time()
 results <- list()
+reps_all <- list()   # replicate-level results, so new summaries never need a rerun
 for (s in scenarios) {
   cat(format(Sys.time(), "%H:%M"), s$block, "|", s$label, "\n")
   p <- modifyList(base, s$changes)
@@ -550,14 +662,20 @@ for (s in scenarios) {
   if (any(failed)) cat("   ", sum(failed), "replicates failed, e.g.:", unlist(reps[failed])[1], "\n")
   if (sum(!failed) < 10) { cat("    skipping scenario: too few successful replicates\n"); next }
   d <- do.call(rbind, reps[!failed])
+  reps_all[[paste(s$block, s$label)]] <- d
   alt <- d[!d$null, ]
   nul <- d[d$null, ]
   n_x <- if (is.null(p$extra_loci)) 0 else nrow(p$extra_loci)
-  n_pools_ctrl <- p$n_pools_GR + p$n_pools_YS      # one paired control pool per treatment pool
-  pool_cost <- p$cost_lib + p$cost_per_M_pairs * p$cov_ind * p$N_per_pool * p$genome_Mb / p$read_pair_bp
+  n_treat <- p$n_pools_GR + p$n_pools_YS + (p$n_mid > 0) * (p$n_pools_MS + p$n_pools_MD)
+  n_pools_ctrl  <- mean(alt$n_pools_ctrl)   # Ctrl pools and larvae as built in the replicates
+  n_ctrl_larvae <- mean(alt$n_ctrl)         # (with "matched_plus" they vary between replicates)
+  ## cost = one library per pool + reads for every larva at cov_ind depth
+  seq_cost <- (n_treat + n_pools_ctrl) * p$cost_lib +
+    p$cost_per_M_pairs * p$cov_ind * (n_treat * p$N_per_pool + n_ctrl_larvae) * p$genome_Mb / p$read_pair_bp
   n_windows <- sum(p$chrom_cM / p$marker_cM + 1)
 
-  for (cn in c("GR_YS", "GR_pair", "YS_pair", "GRsib_YSsib", "GR_ctrl", "YS_ctrl")) {
+  for (cn in c("GR_YS", "GR_ctrl", "YS_ctrl", "MS_MD", "MS_ctrl", "MD_ctrl")) {
+    if (all(is.na(alt[[paste0(cn, "_causal")]]))) next     # e.g. no third arm in this scenario
     thr <- quantile(nul[[paste0(cn, "_genome")]], 0.95, na.rm = TRUE)
     hit <- alt[[paste0(cn, "_causal")]] > thr
     ## extra loci: power for each, and power to detect ALL loci in the same experiment
@@ -577,13 +695,14 @@ for (s in scenarios) {
       power_all_loci = mean(hit_all, na.rm = TRUE),
       peak_dist_cM   = median(alt[[paste0(cn, "_peakdist")]][hit %in% TRUE], na.rm = TRUE),
       delta_anc      = mean(alt$delta_anc_GR_ctrl, na.rm = TRUE),
-      delta_anc_pair = mean(alt$delta_anc_GR_pair, na.rm = TRUE),
       res_freq_F8    = mean(alt$res_freq_final, na.rm = TRUE),
       drift_sd       = mean(alt$drift_sd, na.rm = TRUE),
       n_GR = mean(alt$n_GR), n_YS = mean(alt$n_YS), n_ctrl = mean(alt$n_ctrl),
+      n_MS = mean(alt$n_MS), n_MD = mean(alt$n_MD),
+      n_rafts_both = mean(alt$n_rafts_both), n_rafts_neither = mean(alt$n_rafts_neither),
       n_need_GR = p$n_pools_GR * p$N_per_pool, n_need_YS = p$n_pools_YS * p$N_per_pool,
-      n_need_ctrl = n_pools_ctrl * p$N_per_pool,
-      seq_cost_usd   = round((p$n_pools_GR + p$n_pools_YS + n_pools_ctrl) * pool_cost),
+      n_pools_ctrl = n_pools_ctrl,
+      seq_cost_usd   = round(seq_cost),
       n_rep = nrow(alt), n_null = nrow(nul))
   }
   ## save progress after every scenario, so a crash late in the run loses nothing
@@ -594,6 +713,7 @@ Sys.time() - t0
 
 write.csv(results, file.path(results_dir, "lsph_powersim_results.csv"), row.names = FALSE)
 saveRDS(list(results      = results,
+             replicates   = reps_all,
              base         = base,
              scenarios    = scenarios,
              sim_code     = deparse(utils::removeSource(simulate_replicate)),
@@ -607,17 +727,62 @@ saveRDS(list(results      = results,
 
 ``` r
 run <- readRDS(file.path(results_dir, "lsph_powersim_run.rds"))
-results <- run$results
-
 dose_file <- file.path(results_dir, "lsph_powersim_run_dose.rds")
-if (file.exists(dose_file)) results <- rbind(results, readRDS(dose_file)$results)
+dose_run  <- if (file.exists(dose_file)) readRDS(dose_file) else NULL
+## after a full rerun the main run has blocks H, I and K too: use the dose run only for blocks the main run lacks
+if (!is.null(dose_run)) {
+  dose_run$results <- subset(dose_run$results, !block %in% run$results$block)
+  if (nrow(dose_run$results) == 0) dose_run <- NULL
+}
+cols      <- if (is.null(dose_run)) names(run$results) else intersect(names(run$results), names(dose_run$results))
+results   <- rbind(run$results[cols], dose_run$results[cols])   # runs made with different code can differ in columns
 
-if (!identical(run$base, base))           warning("Baseline parameters changed since this run")
-```
+## Pooled threshold. Under the null, survival ignores genotype, so doses, dose-response
+## curves, allele frequencies and extra loci do not change the null distribution; only the
+## design does. Each scenario's threshold is a 95th percentile of just N_NULL replicates,
+## so we average it over all scenarios that share the same null design.
+effect_only <- c("LC50", "probit_slope", "dose_high", "dose_low", "dose_mid", "batch_sd", "raft_sd",
+                 "extra_loci", "p_res_green", "p_res_yellow", "causal_chr", "causal_cM",
+                 "genome_Mb", "cost_lib", "cost_per_M_pairs", "read_pair_bp")
+null_keys <- function(scen, b) do.call(rbind, lapply(scen, function(s) {
+  p <- modifyList(b, s$changes)
+  data.frame(id = paste(s$block, s$label),
+             null_key = paste(deparse(p[setdiff(names(p), effect_only)]), collapse = ""))
+}))
+keys <- null_keys(run$scenarios, run$base)
+if (!is.null(dose_run))
+  keys <- rbind(keys, null_keys(if (is.null(dose_run$scenarios)) scenarios else dose_run$scenarios,
+                                if (is.null(dose_run$base)) base else dose_run$base))
+keys <- keys[!duplicated(keys$id), ]
+results$null_key <- keys$null_key[match(paste(results$block, results$label), keys$id)]
+no_key <- is.na(results$null_key)
+results$null_key[no_key] <- paste(results$block, results$label)[no_key]    # unmatched: keep own threshold
 
-    ## Warning: Baseline parameters changed since this run
+thr <- unique(results[, c("null_key", "contrast", "threshold")])   # identical scenarios count once
+thr <- aggregate(threshold ~ null_key + contrast, data = thr, FUN = mean)
+results$threshold_pooled <- thr$threshold[match(paste(results$null_key, results$contrast),
+                                                paste(thr$null_key, thr$contrast))]
+## signal = median(peak / threshold), so rescaling gives median(peak / pooled threshold) exactly.
+## power cannot be rescaled from the summaries and still uses each scenario's own threshold.
+results$signal_pooled    <- results$signal    * results$threshold / results$threshold_pooled
+results$signal_x1_pooled <- results$signal_x1 * results$threshold / results$threshold_pooled
 
-``` r
+## Runs that saved replicate-level results (from 2026-11-24 on) also give power at the pooled threshold
+rep_list <- c(run$replicates, dose_run$replicates)
+if (length(rep_list) > 0) {
+  results$power_pooled <- sapply(seq_len(nrow(results)), function(i) {
+    d <- rep_list[[paste(results$block[i], results$label[i])]]
+    if (is.null(d)) return(NA)
+    mean(d[[paste0(results$contrast[i], "_causal")]][!d$null] > results$threshold_pooled[i], na.rm = TRUE)
+  })
+}
+
+## The main run predates the block relabelling: sensitivity was "H", and its
+## "I. Modifier" block is replaced by block K in the dose run.
+results <- subset(results, block != "I. Modifier")
+results$block[results$block == "H. Sensitivity"] <- "J. Sensitivity"
+
+if (!identical(run$base, base))           warning("Reference design changed since this run")
 if (!identical(run$scenarios, scenarios)) warning("Scenarios changed since this run")
 ```
 
@@ -626,11 +791,6 @@ if (!identical(run$scenarios, scenarios)) warning("Scenarios changed since this 
 ``` r
 if (!identical(run$sim_code, deparse(utils::removeSource(simulate_replicate))))
   warning("simulate_replicate() changed since this run")
-```
-
-    ## Warning: simulate_replicate() changed since this run
-
-``` r
 if (!identical(run$meiosis_code, deparse(utils::removeSource(meiosis))))
   warning("meiosis() changed since this run")
 
@@ -638,20 +798,29 @@ cat("Results from run on", format(run$run_date), "with", run$n_rep, "+", run$n_n
     "replicates per scenario\n")
 ```
 
-    ## Results from run on 2026-11-23 17:57:43 with 200 + 200 replicates per scenario
+    ## Results from run on 2026-11-24 17:04:28 with 200 + 200 replicates per scenario
 
 **How to read these:**
 
 Contrasts (each has its own design-specific threshold):
 
-- `GR_YS`: survivors at the high dose vs dead at the low dose. Discovery
-  scan.
-- `GR_pair` / `YS_pair`: treatment pools vs their paired pools of
-  untreated sibs (paired t). Selection within families; immune to family
-  structure.
-- `GRsib_YSsib`: untreated sibs of GR rafts vs untreated sibs of YS
-  rafts. Selection between families.
-- `GR_ctrl` / `YS_ctrl`: treatment pools vs all control pools combined.
+- `GR_YS` (**GR vs YS**): survivors at the high dose vs dead at the low
+  dose. Discovery scan.
+- `GR_ctrl` (**GR vs Ctrl**) and `YS_ctrl` (**YS vs Ctrl**): each arm vs
+  the Ctrl pools, a random sample of the F8. Which arm moves shows
+  dominance: recessive moves GR, dominant moves YS.
+- `MS_MD`, `MS_ctrl`, `MD_ctrl`: third arm, survivors vs dead at the
+  intermediate dose, and each vs Ctrl.
+
+The current code builds Ctrl as one untreated sib from each assayed raft
+(slide 3). Runs saved before 2026-11-24 used Ctrl pools of sibs of the
+GR and YS rafts only, and also contain `GR_pair`, `YS_pair` and
+`GRsib_YSsib` contrasts that are no longer run. The saved main run
+(blocks A-G, J) and dose run (H, I, K) also disagree at nearly the same
+reference design (GR vs YS about 2.4 vs 3.0; YS vs Ctrl about 0.9 vs
+1.6), more than marker spacing or a weak modifier should explain, so
+compare designs within a figure, not across runs, until both are rerun
+with the current code.
 
 Columns:
 
@@ -661,6 +830,12 @@ Columns:
   as a multiple of it (median of 200 replicates). 1 = just significant;
   2 = a peak with twice the threshold’s −log10(p). This separates
   designs even when power is 1.
+- `signal_pooled`: the same, against the threshold averaged over all
+  scenarios with the same null design (doses, dose-response and allele
+  frequencies do not change the null). It removes most of the
+  scenario-to-scenario noise in the threshold and is what the figures
+  show. A signal of 1 means half the replicates reach the threshold
+  (power ≈ 0.5).
 - `power_x1`, `signal_x1`: the same for the chr3 modifier (panel K).
 - `power_all_loci`: probability of detecting both the MAL and the
   modifier in the same experiment.
@@ -669,28 +844,184 @@ Columns:
 - `n_GR` / `n_need_GR`: whether there were enough resistant rafts to
   fill the GR pools.
 - `peak_dist_cM`: how close the MAL peak lands to the true position.
-- `delta_anc` / `delta_anc_pair`: true green-ancestry difference at the
-  MAL, GR minus all controls / GR minus its paired sibs.
+- `delta_anc`: true green-ancestry difference at the MAL, GR minus Ctrl.
 
-## Signal at the MAL
+## Which design levers matter
+
+Each row is one lever, varied with everything else at the reference
+design. Points are the tested levels, the bar spans them, and the open
+circle is the reference design. Levels are named at the ends of rows
+that move by more than 0.3. Panels: GR vs YS, GR vs Ctrl, YS vs Ctrl.
 
 ``` r
-main_contrasts <- c("GR_YS", "GR_pair", "GRsib_YSsib", "GR_ctrl")
-pd <- subset(results, contrast %in% main_contrasts & !block %in% c("H. High dose", "I. Low dose", "K. Modifier"))
-pd$contrast <- factor(pd$contrast, levels = main_contrasts)
-pd$label <- factor(pd$label, levels = unique(results$label))
-ggplot(pd, aes(label, signal, colour = contrast, fill = contrast, group = contrast)) +
-  geom_hline(yintercept = 1, linetype = 2, colour = "grey50") +
-  geom_line() + geom_point(shape = 21, colour = "black", size = 2.5) +
-  annotate("text", x = 0.6, y = 1, label = "threshold", hjust = 0, vjust = -0.5,
-           size = 3, colour = "grey40") +   # after the data layers, so the x axis stays discrete
-  scale_colour_manual(values = contrast_cols) + scale_fill_manual(values = contrast_cols) +
-  facet_wrap(~ block, scales = "free_x", ncol = 2, axes = "all_y") +   # y axis on every panel
-  labs(x = NULL, y = "Peak −log10(p) / threshold −log10(p)", colour = "Contrast", fill = "Contrast") +
-  theme_bw() + theme(axis.text.x = element_text(angle = 35, hjust = 1))
+main_contrasts <- c("GR_YS", "GR_ctrl", "YS_ctrl")   # also used by the tables below
+contrast_names <- c(GR_YS = "GR vs YS", GR_ctrl = "GR vs Ctrl", YS_ctrl = "YS vs Ctrl")
+lever_blocks <- c("C. Pools per phenotype", "D. Individuals per pool", "B. F8 rafts assayed",
+                  "N. Larvae per dose per raft", "F. Second blood meal",
+                  "A. Rafts per generation (F3-F7)", "E. Sequencing depth per individual")
+lever_names  <- c("Pools per phenotype", "Larvae per pool", "F8 rafts assayed",
+                  "Larvae per dose per raft", "Second blood meal", "Rafts per generation, F3-F7",
+                  "Depth per larva")
+plan_labels  <- c("5", "20", "200", "40 per dose", "200 independent", "slow 80->175", "5x")   # reference design in each block
+
+lv <- subset(results, block %in% lever_blocks & contrast %in% names(contrast_names) &
+               label != "40, no third arm")
+lv$lever   <- factor(lever_names[match(lv$block, lever_blocks)], levels = rev(lever_names))
+lv$panel   <- factor(contrast_names[lv$contrast], levels = contrast_names)
+lv$is_plan <- lv$label == plan_labels[match(lv$block, lever_blocks)]
+span  <- ave(lv$signal_pooled, lv$lever, lv$panel, FUN = function(v) diff(range(v, na.rm = TRUE)))
+is_lo <- ave(lv$signal_pooled, lv$lever, lv$panel, FUN = function(v) v %in% min(v, na.rm = TRUE))
+is_hi <- ave(lv$signal_pooled, lv$lever, lv$panel, FUN = function(v) v %in% max(v, na.rm = TRUE))
+lv$lo_label <- ifelse(is_lo == 1 & span > 0.3, sub(" rafts", "", lv$label), NA)   # left of the bar
+lv$hi_label <- ifelse(is_hi == 1 & span > 0.3, sub(" rafts", "", lv$label), NA)   # right of the bar
+rng <- do.call(rbind, lapply(split(lv, list(lv$lever, lv$panel), drop = TRUE), function(d)
+  data.frame(lever = d$lever[1], panel = d$panel[1],
+             lo = min(d$signal_pooled, na.rm = TRUE), hi = max(d$signal_pooled, na.rm = TRUE))))
+
+ggplot(lv, aes(signal_pooled, lever)) +
+  geom_vline(xintercept = 1, linetype = 2, colour = "grey50") +
+  geom_segment(data = rng, aes(x = lo, xend = hi, y = lever, yend = lever),
+               linewidth = 3, colour = pal[["purple"]], alpha = 0.35, lineend = "round") +
+  geom_point(colour = pal_dark[["purple"]], size = 2) +
+  geom_point(data = subset(lv, is_plan), shape = 21, fill = "white", colour = "black", size = 3, stroke = 0.8) +
+  geom_text(aes(label = lo_label), hjust = 1, nudge_x = -0.12, size = 2.7, colour = "grey25", na.rm = TRUE) +
+  geom_text(aes(label = hi_label), hjust = 0, nudge_x = 0.12, size = 2.7, colour = "grey25", na.rm = TRUE) +
+  scale_x_continuous(expand = expansion(mult = c(0.08, 0.15))) +
+  expand_limits(x = 0) +
+  facet_wrap(~ panel, nrow = 1) +
+  labs(x = "Peak −log10(p) / threshold −log10(p)", y = NULL,
+       subtitle = "Open circle = reference design. Dashed line = 5% genome-wide threshold (1 = 50% power).") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
 ```
 
-![](../figures/knitted_mds/LSPH_power_simulation_crossed-results-signal-1.png)<!-- -->
+![](../figures/knitted_mds/LSPH_power_simulation_crossed-results-levers-1.png)<!-- -->
+
+- Pools per phenotype is the lever that moves all three. With 5 pools,
+  GR vs YS and GR vs Ctrl are well above threshold, but YS vs Ctrl is
+  just below it (power about 0.35), so the YS arm on its own would often
+  miss the MAL. With 8 pools all three clear it.
+- Larvae per pool helps YS vs Ctrl too, but less per dollar than pools
+  (next figure).
+- F8 rafts assayed: in the saved run, GR vs Ctrl and YS vs Ctrl fall as
+  more rafts are assayed, because Ctrl pools were then sibs of the GR
+  and YS rafts only. Check this after the rerun with Ctrl drawn from all
+  rafts.
+- Second blood meal: 150 + 50 sib rafts gives the same as 200
+  independent rafts.
+- Rafts per generation (F3-F7) and depth change little; differences of
+  about 0.1 between levels are within simulation noise.
+
+## What sequencing money buys
+
+The three levers that change the F8 sequencing cost, on a common cost
+axis. An open symbol means the pools could not be filled from 200 assay
+rafts (\< 95% of planned larvae).
+
+``` r
+cost_blocks <- c("C. Pools per phenotype"             = "Pools per phenotype",
+                 "D. Individuals per pool"            = "Larvae per pool",
+                 "E. Sequencing depth per individual" = "Depth per larva")
+cb <- subset(results, block %in% names(cost_blocks) & contrast %in% main_contrasts)
+cb$lever   <- factor(cost_blocks[cb$block], levels = cost_blocks)
+cb$panel   <- factor(contrast_names[cb$contrast], levels = contrast_names)
+cb$cost_k  <- cb$seq_cost_usd / 1000
+cb$full    <- pmin(cb$n_GR / cb$n_need_GR, cb$n_YS / cb$n_need_YS) >= 0.95
+cb$fill    <- ifelse(cb$full, unname(pal_dark)[as.integer(cb$lever)], "white")
+cb$is_plan <- cb$label %in% c("5", "20", "5x")
+ends <- cb[cb$cost_k == ave(cb$cost_k, cb$lever, cb$panel, FUN = max), ]
+
+ggplot(cb, aes(cost_k, signal_pooled, colour = lever)) +
+  geom_hline(yintercept = 1, linetype = 2, colour = "grey50") +
+  geom_line(linewidth = 0.8) +
+  geom_point(aes(shape = lever, fill = fill), size = 2.8, stroke = 0.9) +
+  geom_point(data = subset(cb, is_plan), shape = 21, fill = "white", colour = "black", size = 3.5, stroke = 0.8) +
+  geom_text(data = subset(cb, !is_plan), aes(label = label), vjust = -1, size = 2.7, colour = "grey25") +
+  geom_text(data = ends, aes(label = lever), hjust = -0.15, size = 3) +
+  scale_colour_manual(values = unname(pal_dark)) +
+  scale_shape_manual(values = c(21, 22, 24)) +
+  scale_fill_identity() +
+  scale_x_continuous(expand = expansion(mult = c(0.05, 0.35))) +
+  facet_wrap(~ panel, nrow = 1) +
+  labs(x = "F8 sequencing cost, GR + YS + Ctrl pools ($k)",
+       y = "Peak −log10(p) / threshold −log10(p)",
+       subtitle = "Open circle = reference design (5 pools, 20 larvae, 5x). Open symbols = pools short of larvae.") +
+  theme_bw() +
+  theme(legend.position = "none", panel.grid.minor = element_blank())
+```
+
+![](../figures/knitted_mds/LSPH_power_simulation_crossed-results-cost-1.png)<!-- -->
+
+- Per dollar, pools per phenotype buy the most signal in all three
+  contrasts; extra depth buys nothing. 8 pools (about +\$2.8k) lifts YS
+  vs Ctrl clearly above threshold.
+- Depth can be cut to 2x with little loss, which frees most of the cost
+  of extra pools. 8 pools at 2x has not been simulated as a combination
+  and should be checked before it is adopted.
+- At 10 pools (or 40 larvae per pool), 200 assay rafts cannot fill the
+  GR pools.
+
+## Robustness: things we don’t control, and the F2 pilot
+
+Each row changes one or more things from the current F8 plan (top row).
+The F2 rows are the 3 + 3 pool F2 pilot with 100 or 200 rafts assayed;
+Combinations pair levers that look good on their own; Ctrl design
+compares random-raft Ctrl pools with Ctrl pools matched to the GR and YS
+rafts (separate, separate plus intermediate, or merged into pools of
+40); Larvae per raft compares 1 larva from each raft with 2 sibs from
+each of half as many, more extreme rafts.
+
+``` r
+rb <- subset(results, block %in% c("G. F2 pilot vs F8", "L. Combinations", "M. Ctrl design",
+                                    "O. Larvae per raft in pools", "J. Sensitivity"))
+nice <- function(x) {
+  x <- sub("^F8 (baseline|reference design)$", "F8, reference design", x)
+  x <- sub("3\\+3 pools", "3 + 3 pools", x)
+  x <- sub("p_res green", "green r-allele frequency", x)
+  x <- sub("p_res yellow", "yellow r-allele frequency", x)
+  sub("RS survives", "S/r survival", x)
+}
+rob_metric <- function(cn, name, col) {
+  x <- subset(rb, contrast == cn)
+  data.frame(scenario = nice(x$label), block = x$block, metric = name, value = x[[col]])
+}
+rob_names <- c("GR vs YS signal", "GR vs Ctrl signal", "YS vs Ctrl signal",
+               "Peak distance from MAL, cM (GR vs YS)")
+long_r <- rbind(rob_metric("GR_YS",   rob_names[1], "signal_pooled"),
+                rob_metric("GR_ctrl", rob_names[2], "signal_pooled"),
+                rob_metric("YS_ctrl", rob_names[3], "signal_pooled"),
+                rob_metric("GR_YS",   rob_names[4], "peak_dist_cM"))
+long_r$metric   <- factor(long_r$metric, levels = rob_names)
+long_r$scenario <- factor(long_r$scenario,
+                          levels = rev(unique(c("F8, reference design", long_r$scenario))))
+grp <- c("G. F2 pilot vs F8" = "F2 vs F8", "L. Combinations" = "Combinations",
+         "M. Ctrl design" = "Ctrl design", "O. Larvae per raft in pools" = "Larvae per raft",
+         "J. Sensitivity" = "Not controlled")
+long_r$group    <- factor(grp[long_r$block], levels = grp)
+plan_r <- subset(long_r, scenario == "F8, reference design")
+thr_r  <- data.frame(metric = factor(rob_names[1:3], levels = rob_names), x = 1)
+
+ggplot(long_r, aes(value, scenario)) +
+  geom_vline(data = thr_r, aes(xintercept = x), linetype = 2, colour = "grey50") +
+  geom_vline(data = plan_r[, c("metric", "value")], aes(xintercept = value), colour = "grey75") +
+  geom_point(aes(fill = scenario == "F8, reference design"), shape = 21, colour = "black", size = 2.6) +
+  scale_fill_manual(values = c(`TRUE` = "white", `FALSE` = pal_dark[["purple"]]), guide = "none") +
+  facet_grid(group ~ metric, scales = "free", space = "free_y") +
+  expand_limits(x = 0) +
+  labs(x = NULL, y = NULL,
+       subtitle = "Grey line = reference design; dashed line = 5% genome-wide threshold.") +
+  theme_bw() +
+  theme(panel.grid.minor = element_blank())
+```
+
+![](../figures/knitted_mds/LSPH_power_simulation_crossed-results-robustness-1.png)<!-- -->
+
+- GR vs YS and GR vs Ctrl stay above threshold in every scenario; the
+  largest loss is a low green r-allele frequency. YS vs Ctrl is below
+  threshold throughout in this run.
+- The F2 pilot detects the MAL (signal above 1) but localizes it several
+  times less precisely than the F8, as expected from fewer generations
+  of recombination.
 
 ## Diagnostics: shift, localization, pool filling, cost
 
@@ -723,178 +1054,216 @@ ggplot(long, aes(value, scenario, fill = block)) +
 
 ``` r
 knitr::kable(subset(results, contrast == "GR_YS" & !block %in% c("H. High dose", "I. Low dose", "K. Modifier"),
-                    select = c(block, label, power, signal, fpr_bonferroni, peak_dist_cM,
+                    select = c(block, label, power, signal, signal_pooled, fpr_bonferroni, peak_dist_cM,
                                n_GR, n_YS, res_freq_F8, drift_sd, seq_cost_usd)),
              digits = 2, row.names = FALSE)
 ```
 
-| block                              | label                                     | power | signal | fpr_bonferroni | peak_dist_cM |   n_GR |   n_YS | res_freq_F8 | drift_sd | seq_cost_usd |
-|:-----------------------------------|:------------------------------------------|------:|-------:|---------------:|-------------:|-------:|-------:|------------:|---------:|-------------:|
-| A. Rafts per generation (F3-F7)    | slow 80-\>175                             |  1.00 |   2.43 |           0.00 |         1.25 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| A. Rafts per generation (F3-F7)    | quick 200-\>500                           |  1.00 |   2.43 |           0.00 |         1.25 | 100.00 | 100.00 |        0.45 |     0.04 |         4664 |
-| A. Rafts per generation (F3-F7)    | quick, crash F5                           |  1.00 |   2.36 |           0.00 |         1.50 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| A. Rafts per generation (F3-F7)    | flat 50                                   |  1.00 |   2.23 |           0.01 |         1.50 | 100.00 | 100.00 |        0.45 |     0.07 |         4664 |
-| A. Rafts per generation (F3-F7)    | flat 100                                  |  1.00 |   2.54 |           0.00 |         1.12 | 100.00 | 100.00 |        0.44 |     0.06 |         4664 |
-| A. Rafts per generation (F3-F7)    | flat 200                                  |  1.00 |   2.31 |           0.00 |         1.00 | 100.00 | 100.00 |        0.45 |     0.04 |         4664 |
-| A. Rafts per generation (F3-F7)    | flat 500                                  |  1.00 |   2.35 |           0.00 |         1.25 | 100.00 | 100.00 |        0.45 |     0.03 |         4664 |
-| B. F8 rafts assayed                | 100                                       |  1.00 |   2.20 |           0.00 |         1.25 |  81.04 |  95.42 |        0.45 |     0.05 |         4664 |
-| B. F8 rafts assayed                | 150                                       |  1.00 |   2.18 |           0.00 |         1.12 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| B. F8 rafts assayed                | 200                                       |  1.00 |   2.43 |           0.00 |         1.25 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| B. F8 rafts assayed                | 300                                       |  1.00 |   2.56 |           0.00 |         1.00 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| C. Pools per phenotype             | 3                                         |  0.98 |   1.52 |           0.00 |         2.00 |  60.00 |  60.00 |        0.45 |     0.05 |         2799 |
-| C. Pools per phenotype             | 5                                         |  1.00 |   2.43 |           0.00 |         1.25 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| C. Pools per phenotype             | 8                                         |  1.00 |   3.56 |           0.00 |         0.50 | 156.01 | 160.00 |        0.45 |     0.05 |         7463 |
-| C. Pools per phenotype             | 10                                        |  1.00 |   4.88 |           0.00 |         0.50 | 161.17 | 191.31 |        0.45 |     0.05 |         9329 |
-| D. Individuals per pool            | 10                                        |  1.00 |   2.08 |           0.01 |         1.25 |  50.00 |  50.00 |        0.45 |     0.06 |         2852 |
-| D. Individuals per pool            | 20                                        |  1.00 |   2.43 |           0.00 |         1.25 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| D. Individuals per pool            | 30                                        |  1.00 |   2.41 |           0.00 |         1.00 | 149.13 | 150.00 |        0.45 |     0.05 |         6477 |
-| D. Individuals per pool            | 40                                        |  1.00 |   2.55 |           0.00 |         1.00 | 162.14 | 190.98 |        0.45 |     0.05 |         8289 |
-| E. Sequencing depth per individual | 1x                                        |  1.00 |   2.24 |           0.02 |         1.00 | 100.00 | 100.00 |        0.45 |     0.05 |         1765 |
-| E. Sequencing depth per individual | 2x                                        |  1.00 |   2.27 |           0.00 |         1.12 | 100.00 | 100.00 |        0.45 |     0.05 |         2490 |
-| E. Sequencing depth per individual | 5x                                        |  1.00 |   2.43 |           0.00 |         1.25 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| E. Sequencing depth per individual | 10x                                       |  1.00 |   2.39 |           0.00 |         1.25 | 100.00 | 100.00 |        0.45 |     0.05 |         8289 |
-| F. Second blood meal               | 150 rafts                                 |  1.00 |   2.18 |           0.00 |         1.12 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| F. Second blood meal               | 150 + 50 sib rafts                        |  1.00 |   2.44 |           0.00 |         1.25 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| F. Second blood meal               | 150 + 150 sib rafts                       |  1.00 |   2.66 |           0.01 |         1.25 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| F. Second blood meal               | 200 independent                           |  1.00 |   2.43 |           0.00 |         1.25 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| G. F2 pilot vs F8                  | F2 pilot 3+3 pools                        |  0.93 |   1.42 |           0.00 |         6.50 |  56.38 |  60.00 |        0.45 |     0.03 |         2799 |
-| G. F2 pilot vs F8                  | F8 baseline                               |  1.00 |   2.43 |           0.00 |         1.25 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| H. Sensitivity                     | p_res green 0.5                           |  0.98 |   1.76 |           0.00 |         1.25 |  96.88 | 100.00 |        0.26 |     0.05 |         4664 |
-| H. Sensitivity                     | p_res green 0.75                          |  1.00 |   2.13 |           0.00 |         1.25 |  99.97 | 100.00 |        0.38 |     0.05 |         4664 |
-| H. Sensitivity                     | p_res green 1                             |  1.00 |   2.42 |           0.01 |         1.00 | 100.00 | 100.00 |        0.49 |     0.05 |         4664 |
-| H. Sensitivity                     | p_res yellow 0.1                          |  1.00 |   2.27 |           0.00 |         1.00 | 100.00 | 100.00 |        0.51 |     0.05 |         4664 |
-| H. Sensitivity                     | RS survives 0.3                           |  1.00 |   1.99 |           0.00 |         1.00 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| H. Sensitivity                     | poor AIMs                                 |  1.00 |   2.17 |           0.00 |         1.00 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| H. Sensitivity                     | males mate 2                              |  1.00 |   2.22 |           0.00 |         1.25 | 100.00 | 100.00 |        0.44 |     0.07 |         4664 |
-| H. Sensitivity                     | unequal families                          |  1.00 |   2.41 |           0.00 |         1.25 | 100.00 | 100.00 |        0.44 |     0.07 |         4664 |
-| I. Modifier                        | OR 3 \| current dose \| founders 0.8/0.2  |  1.00 |   2.16 |           0.00 |         1.00 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| I. Modifier                        | OR 5 \| current dose \| founders 0.8/0.2  |  1.00 |   2.31 |           0.00 |         1.00 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| I. Modifier                        | OR 10 \| current dose \| founders 0.8/0.2 |  1.00 |   2.09 |           0.00 |         1.12 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| I. Modifier                        | OR 3 \| lower dose \| founders 0.8/0.2    |  1.00 |   2.00 |           0.00 |         1.00 | 100.00 | 100.00 |        0.46 |     0.05 |         4664 |
-| I. Modifier                        | OR 5 \| lower dose \| founders 0.8/0.2    |  1.00 |   2.05 |           0.00 |         1.25 | 100.00 | 100.00 |        0.44 |     0.05 |         4664 |
-| I. Modifier                        | OR 10 \| lower dose \| founders 0.8/0.2   |  1.00 |   1.73 |           0.01 |         1.00 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| I. Modifier                        | OR 3 \| current dose \| founders 1/0      |  1.00 |   2.33 |           0.00 |         1.00 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| I. Modifier                        | OR 5 \| current dose \| founders 1/0      |  1.00 |   2.08 |           0.00 |         1.25 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| I. Modifier                        | OR 10 \| current dose \| founders 1/0     |  1.00 |   2.19 |           0.01 |         1.00 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| I. Modifier                        | OR 3 \| lower dose \| founders 1/0        |  1.00 |   1.98 |           0.01 |         1.25 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| I. Modifier                        | OR 5 \| lower dose \| founders 1/0        |  1.00 |   1.95 |           0.00 |         1.50 | 100.00 | 100.00 |        0.45 |     0.05 |         4664 |
-| I. Modifier                        | OR 10 \| lower dose \| founders 1/0       |  0.99 |   1.67 |           0.01 |         1.25 | 100.00 | 100.00 |        0.46 |     0.05 |         4664 |
+| block                              | label                             | power | signal | signal_pooled | fpr_bonferroni | peak_dist_cM |   n_GR |   n_YS | res_freq_F8 | drift_sd | seq_cost_usd |
+|:-----------------------------------|:----------------------------------|------:|-------:|--------------:|---------------:|-------------:|-------:|-------:|------------:|---------:|-------------:|
+| A. Rafts per generation (F3-F7)    | slow 80-\>175                     |  1.00 |   3.06 |          2.88 |           0.00 |         1.00 |  90.16 |  92.70 |        0.45 |     0.05 |         6997 |
+| A. Rafts per generation (F3-F7)    | quick 200-\>500                   |  1.00 |   3.05 |          3.05 |           0.00 |         1.25 |  91.91 |  94.46 |        0.45 |     0.03 |         6997 |
+| A. Rafts per generation (F3-F7)    | quick, crash F5                   |  1.00 |   3.00 |          3.00 |           0.00 |         1.00 |  89.56 |  92.27 |        0.44 |     0.05 |         6997 |
+| A. Rafts per generation (F3-F7)    | flat 50                           |  1.00 |   2.76 |          2.76 |           0.00 |         1.12 |  85.80 |  91.50 |        0.45 |     0.07 |         6997 |
+| A. Rafts per generation (F3-F7)    | flat 100                          |  1.00 |   2.95 |          2.95 |           0.00 |         1.25 |  89.81 |  92.60 |        0.45 |     0.05 |         6997 |
+| A. Rafts per generation (F3-F7)    | flat 200                          |  1.00 |   2.98 |          2.98 |           0.00 |         1.00 |  90.76 |  93.52 |        0.45 |     0.04 |         6997 |
+| A. Rafts per generation (F3-F7)    | flat 500                          |  1.00 |   2.94 |          2.94 |           0.00 |         1.00 |  90.74 |  92.78 |        0.45 |     0.03 |         6997 |
+| B. F8 rafts assayed                | 100                               |  1.00 |   3.22 |          3.22 |           0.00 |         1.00 |  46.05 |  55.62 |        0.44 |     0.06 |         5830 |
+| B. F8 rafts assayed                | 150                               |  1.00 |   2.88 |          2.88 |           0.01 |         1.25 |  70.02 |  80.69 |        0.45 |     0.05 |         6297 |
+| B. F8 rafts assayed                | 200                               |  1.00 |   3.06 |          2.88 |           0.00 |         1.00 |  90.16 |  92.70 |        0.45 |     0.05 |         6997 |
+| B. F8 rafts assayed                | 300                               |  1.00 |   2.97 |          2.97 |           0.01 |         1.00 |  99.75 |  97.27 |        0.45 |     0.05 |         6997 |
+| C. Pools per phenotype             | 3                                 |  1.00 |   1.62 |          1.62 |           0.03 |         1.25 |  59.90 |  59.24 |        0.45 |     0.06 |         5131 |
+| C. Pools per phenotype             | 5                                 |  1.00 |   3.06 |          2.88 |           0.00 |         1.00 |  90.16 |  92.70 |        0.45 |     0.05 |         6997 |
+| C. Pools per phenotype             | 8                                 |  1.00 |   5.14 |          5.14 |           0.00 |         1.00 |  95.00 | 105.68 |        0.45 |     0.05 |         8396 |
+| C. Pools per phenotype             | 10                                |  1.00 |   7.03 |          7.03 |           0.00 |         1.00 |  94.12 | 105.36 |        0.45 |     0.05 |         9329 |
+| D. Individuals per pool            | 10                                |  1.00 |   2.82 |          2.82 |           0.00 |         1.25 |  50.00 |  49.92 |        0.45 |     0.06 |         4278 |
+| D. Individuals per pool            | 20                                |  1.00 |   3.06 |          2.88 |           0.00 |         1.00 |  90.16 |  92.70 |        0.45 |     0.05 |         6997 |
+| D. Individuals per pool            | 30                                |  1.00 |   3.14 |          3.14 |           0.00 |         1.00 |  94.02 | 107.96 |        0.45 |     0.05 |         8420 |
+| D. Individuals per pool            | 40                                |  1.00 |   3.72 |          3.72 |           0.00 |         1.12 |  93.34 | 108.97 |        0.45 |     0.05 |        10361 |
+| E. Sequencing depth per individual | 1x                                |  1.00 |   2.90 |          2.90 |           0.00 |         1.00 |  89.33 |  92.78 |        0.44 |     0.05 |         2647 |
+| E. Sequencing depth per individual | 2x                                |  1.00 |   2.99 |          2.99 |           0.01 |         1.00 |  90.67 |  93.82 |        0.45 |     0.05 |         3735 |
+| E. Sequencing depth per individual | 5x                                |  1.00 |   3.06 |          2.88 |           0.00 |         1.00 |  90.16 |  92.70 |        0.45 |     0.05 |         6997 |
+| E. Sequencing depth per individual | 10x                               |  1.00 |   2.82 |          2.82 |           0.01 |         1.25 |  89.58 |  93.89 |        0.45 |     0.05 |        12433 |
+| F. Second blood meal               | 150 rafts                         |  1.00 |   2.88 |          2.88 |           0.01 |         1.25 |  70.02 |  80.69 |        0.45 |     0.05 |         6297 |
+| F. Second blood meal               | 150 + 50 sib rafts                |  1.00 |   2.75 |          2.75 |           0.01 |         1.25 |  89.26 |  93.00 |        0.45 |     0.05 |         6997 |
+| F. Second blood meal               | 150 + 150 sib rafts               |  1.00 |   2.67 |          2.67 |           0.01 |         1.25 |  99.25 |  98.00 |        0.45 |     0.05 |         6997 |
+| F. Second blood meal               | 200 independent                   |  1.00 |   3.06 |          2.88 |           0.00 |         1.00 |  90.16 |  92.70 |        0.45 |     0.05 |         6997 |
+| G. F2 pilot vs F8                  | F2 pilot 3+3 pools, 100 rafts     |  1.00 |   1.84 |          1.84 |           0.01 |         3.50 |  59.62 |  58.08 |        0.45 |     0.03 |         2565 |
+| G. F2 pilot vs F8                  | F2 pilot 3+3 pools, 200 rafts     |  0.99 |   1.80 |          1.80 |           0.00 |         5.00 |  60.00 |  59.58 |        0.45 |     0.03 |         2799 |
+| G. F2 pilot vs F8                  | F8 baseline                       |  1.00 |   3.06 |          2.88 |           0.00 |         1.00 |  90.16 |  92.70 |        0.45 |     0.05 |         6997 |
+| J. Sensitivity                     | p_res green 0.5                   |  1.00 |   2.02 |          2.08 |           0.02 |         1.75 |  37.99 |  98.97 |        0.25 |     0.05 |         6997 |
+| J. Sensitivity                     | p_res green 0.75                  |  1.00 |   2.47 |          2.52 |           0.00 |         1.75 |  72.67 |  97.66 |        0.38 |     0.05 |         6997 |
+| J. Sensitivity                     | p_res green 1                     |  1.00 |  19.09 |         18.36 |           0.00 |         0.00 |  96.63 |  88.89 |        0.50 |     0.05 |         6997 |
+| J. Sensitivity                     | p_res yellow 0.1                  |  1.00 |   2.73 |          2.59 |           0.00 |         0.75 |  97.06 |  85.92 |        0.51 |     0.05 |         6997 |
+| J. Sensitivity                     | dose varies x2/day                |  1.00 |   2.79 |          2.74 |           0.00 |         1.25 |  86.83 |  79.51 |        0.45 |     0.05 |         6997 |
+| J. Sensitivity                     | poor AIMs                         |  1.00 |   2.59 |          2.59 |           0.03 |         1.25 |  89.94 |  92.89 |        0.45 |     0.05 |         6997 |
+| J. Sensitivity                     | males mate 2                      |  1.00 |   3.15 |          3.15 |           0.00 |         1.00 |  87.62 |  91.42 |        0.45 |     0.07 |         6997 |
+| J. Sensitivity                     | unequal families                  |  1.00 |   3.07 |          3.07 |           0.00 |         0.75 |  89.20 |  89.12 |        0.46 |     0.07 |         6997 |
+| L. Combinations                    | 8 pools, 2x                       |  1.00 |   4.59 |          4.59 |           0.00 |         1.00 |  94.36 | 106.97 |        0.45 |     0.05 |         4482 |
+| L. Combinations                    | 5 pools, 2x, poor AIMs            |  1.00 |   2.38 |          2.38 |           0.03 |         1.00 |  89.58 |  93.32 |        0.45 |     0.06 |         3735 |
+| L. Combinations                    | 8 pools, 2x, poor AIMs            |  1.00 |   3.76 |          3.76 |           0.00 |         1.00 |  94.80 | 105.30 |        0.45 |     0.06 |         4482 |
+| L. Combinations                    | 8 pools, 300 rafts                |  1.00 |   4.98 |          4.98 |           0.00 |         1.00 | 138.25 | 142.38 |        0.45 |     0.05 |         9562 |
+| L. Combinations                    | 10 pools, 300 rafts               |  1.00 |   5.63 |          5.63 |           0.01 |         1.00 | 142.65 | 158.90 |        0.45 |     0.05 |        10495 |
+| M. Ctrl design                     | random, 200 rafts                 |  1.00 |   3.06 |          2.88 |           0.00 |         1.00 |  90.16 |  92.70 |        0.45 |     0.05 |         6997 |
+| M. Ctrl design                     | matched, 200 rafts                |  1.00 |   2.98 |          2.98 |           0.01 |         1.00 |  88.97 |  93.52 |        0.45 |     0.05 |         6838 |
+| M. Ctrl design                     | matched + intermediate, 200 rafts |  1.00 |   2.79 |          2.79 |           0.01 |         1.00 |  88.28 |  92.43 |        0.44 |     0.05 |         7182 |
+| M. Ctrl design                     | matched merged, 200 rafts         |  1.00 |   2.96 |          2.96 |           0.01 |         1.00 |  91.14 |  92.67 |        0.46 |     0.05 |         6590 |
+| M. Ctrl design                     | random, 300 rafts                 |  1.00 |   2.97 |          2.97 |           0.01 |         1.00 |  99.75 |  97.27 |        0.45 |     0.05 |         6997 |
+| M. Ctrl design                     | matched, 300 rafts                |  1.00 |   3.15 |          3.15 |           0.00 |         1.00 |  99.27 |  98.06 |        0.45 |     0.05 |         6972 |
+| M. Ctrl design                     | matched + intermediate, 300 rafts |  1.00 |   2.91 |          2.91 |           0.01 |         1.00 |  99.19 |  97.50 |        0.45 |     0.05 |         8162 |
+| M. Ctrl design                     | matched merged, 300 rafts         |  1.00 |   3.18 |          3.18 |           0.00 |         1.12 |  99.50 |  98.16 |        0.46 |     0.05 |         6715 |
+| N. Larvae per dose per raft        | 30 per dose                       |  1.00 |   2.96 |          2.96 |           0.01 |         1.00 |  89.80 |  88.68 |        0.46 |     0.05 |         6997 |
+| N. Larvae per dose per raft        | 40 per dose                       |  1.00 |   3.06 |          2.88 |           0.00 |         1.00 |  90.16 |  92.70 |        0.45 |     0.05 |         6997 |
+| N. Larvae per dose per raft        | 50 per dose                       |  1.00 |   3.11 |          3.11 |           0.01 |         1.00 |  90.18 |  95.78 |        0.45 |     0.05 |         6997 |
+| N. Larvae per dose per raft        | 40, no third arm                  |  1.00 |   3.04 |          3.04 |           0.01 |         1.00 |  89.44 |  93.36 |        0.45 |     0.05 |         4664 |
+| O. Larvae per raft in pools        | 5 pools, 1 per raft               |  1.00 |   3.06 |          2.88 |           0.00 |         1.00 |  90.16 |  92.70 |        0.45 |     0.05 |         6997 |
+| O. Larvae per raft in pools        | 5 pools, 2 per raft               |  1.00 |   2.68 |          2.68 |           0.00 |         1.25 |  99.61 |  96.04 |        0.45 |     0.05 |         6997 |
+| O. Larvae per raft in pools        | 8 pools, 1 per raft               |  1.00 |   5.14 |          5.14 |           0.00 |         1.00 |  95.00 | 105.68 |        0.45 |     0.05 |         8396 |
+| O. Larvae per raft in pools        | 8 pools, 2 per raft               |  1.00 |   4.68 |          4.68 |           0.00 |         1.25 | 151.75 | 142.78 |        0.46 |     0.05 |         8396 |
+| O. Larvae per raft in pools        | 10 pools, 1 per raft              |  1.00 |   7.03 |          7.03 |           0.00 |         1.00 |  94.12 | 105.36 |        0.45 |     0.05 |         9329 |
+| O. Larvae per raft in pools        | 10 pools, 2 per raft              |  1.00 |   5.73 |          5.73 |           0.01 |         1.00 | 175.10 | 161.85 |        0.46 |     0.05 |         9329 |
 
 ## Doses × heterozygote response (panels H and I)
 
-Each line is one hypothesis for the heterozygote (RS) LC50. Top row:
-signal for the discovery scan (GR vs YS). Bottom row: how fully the
-pools for that arm filled. A dose that works on every line is safe
-before the F2 pilot; a dose that works on only some lines depends on
-what the F2 pilot finds.
+Each cell is one dose (columns) under one hypothesis for the S/r LC50
+(rows); the number is the signal. Top row: GR vs YS. Bottom row: that
+arm vs Ctrl (GR vs Ctrl for the high dose, YS vs Ctrl for the low dose),
+the comparison used to infer dominance. It weakens when heterozygotes
+end up in the arm, because the arm then looks more like the Ctrl pools.
+Red = below threshold. Cells where that arm’s pools were under 80%
+filled say so. A column that is purple in both rows works whatever the
+F2 pilot finds.
 
 ``` r
-dd <- subset(results, block %in% c("H. High dose", "I. Low dose") & contrast == "GR_YS")
+dd <- subset(results, (block == "H. High dose" & contrast %in% c("GR_YS", "GR_ctrl")) |
+                      (block == "I. Low dose"  & contrast %in% c("GR_YS", "YS_ctrl")))
 if (nrow(dd) == 0) {
   cat("No dose-panel (H, I) results in the saved run yet: rerun the run chunk.\n")
 } else {
   parts <- strsplit(dd$label, " | ", fixed = TRUE)
-  dd$dose <- as.numeric(sub(" ppm", "", sapply(parts, `[`, 1)))
-  dd$RS   <- factor(sub("RS LC50 ", "", sapply(parts, `[`, 2)),
-                    levels = paste(c(0.05, 0.2, 2, 20), "ppm"))
-  dd$fill <- ifelse(dd$block == "H. High dose", 100 * dd$n_GR / dd$n_need_GR, 100 * dd$n_YS / dd$n_need_YS)
-  long_d <- rbind(
-    data.frame(dd[, c("block", "dose", "RS")], metric = "Signal (GR vs YS)", value = dd$signal),
-    data.frame(dd[, c("block", "dose", "RS")], metric = "Pools filled (%)",  value = dd$fill))
-  long_d$metric <- factor(long_d$metric, levels = c("Signal (GR vs YS)", "Pools filled (%)"))
-  ggplot(long_d, aes(dose, value, colour = RS, fill = RS, group = RS)) +
-    geom_line() + geom_point(shape = 21, colour = "black", size = 2.5) +
-    scale_colour_manual(values = unname(pal)) + scale_fill_manual(values = unname(pal)) +
-    scale_x_log10() +
-    facet_grid(metric ~ block, scales = "free") +
-    labs(x = "Dose (ppm, log scale)", y = NULL,
-         colour = "Heterozygote LC50", fill = "Heterozygote LC50") +
-    theme_bw()
+  dd$dose   <- as.numeric(sub(" ppm", "", sapply(parts, `[`, 1)))
+  dd$dose_f <- factor(dd$dose, levels = sort(unique(dd$dose)))
+  dd$Sr     <- factor(sub(" ppm", "", sub("RS LC50 ", "", sapply(parts, `[`, 2))),
+                      levels = c("0.05", "0.2", "2", "20"))
+  dd$arm    <- factor(ifelse(dd$block == "H. High dose", "High dose: GR = survivors", "Low dose: YS = dead"))
+  dd$row    <- factor(ifelse(dd$contrast == "GR_YS", "GR vs YS", "GR or YS\nvs Ctrl"),
+                      levels = c("GR vs YS", "GR or YS\nvs Ctrl"))
+  dd$filled <- ifelse(dd$block == "H. High dose", dd$n_GR / dd$n_need_GR, dd$n_YS / dd$n_need_YS)
+  dd$txt    <- ifelse(dd$filled < 0.8,
+                      sprintf("%.2f\n%.0f%% filled", dd$signal_pooled, 100 * dd$filled),
+                      sprintf("%.2f", dd$signal_pooled))
+  ## red from 0 to the threshold (1), purple from 1 to the largest value, so both rows keep their contrast
+  top <- max(dd$signal_pooled, na.rm = TRUE)
+  ggplot(dd, aes(dose_f, Sr, fill = signal_pooled)) +
+    geom_tile(colour = "white", linewidth = 1) +
+    geom_text(aes(label = txt, colour = signal_pooled > 1 + 0.6 * (top - 1) | signal_pooled < 0.4),
+              size = 2.8, lineheight = 0.9) +
+    scale_colour_manual(values = c(`TRUE` = "white", `FALSE` = "black"), guide = "none") +
+    scale_fill_gradientn(colours = c(pal_dark[["red"]], "grey95", pal_dark[["purple"]]),
+                         values = scales::rescale(c(0, 1, top)), limits = c(0, top),
+                         breaks = c(0, 0.5, 1, 2, 3), labels = c("0", "0.5", "1 = threshold", "2", "3"),
+                         name = "Peak −log10(p) /\nthreshold −log10(p)",
+                         guide = guide_colourbar(barheight = unit(12, "lines"))) +
+    facet_grid(row ~ arm, scales = "free_x") +
+    labs(x = "Dose (ppm)", y = "S/r LC50 (ppm)",
+         subtitle = paste0("Reference design: high ", base$dose_high, " ppm, low ", base$dose_low, " ppm")) +
+    theme_bw() +
+    theme(panel.grid = element_blank())
 }
 ```
 
 ![](../figures/knitted_mds/LSPH_power_simulation_crossed-results-dose-1.png)<!-- -->
 
+- Discovery works at every dose tested; the dose choice is decided by
+  pool filling and by GR vs Ctrl and YS vs Ctrl.
+- High dose: 1000 ppm leaves the GR pools less than half full. If the
+  S/r LC50 is high (20 ppm), 2 to 10 ppm lets heterozygotes into the GR
+  pools and GR vs Ctrl falls to the threshold. 250 ppm holds under all
+  four hypotheses; 50 ppm is slightly weaker if the S/r LC50 is 20 ppm.
+- Low dose: 0.005 ppm leaves the YS pools about 60% full. If the S/r
+  LC50 is low (0.05 ppm), doses of 0.02 ppm and above kill heterozygotes
+  too and the YS YS vs Ctrl falls toward the threshold. 0.01 ppm keeps
+  it near its best under all four hypotheses.
+
 ## Modifier (panel K)
 
+Can the third arm find a chr3 modifier that GR vs YS misses? Power to
+detect the modifier in GR vs YS and in the third arm (survivors vs dead
+at the intermediate dose). Columns: modifier allele frequencies in the
+green and yellow founders.
+
 ``` r
-pm <- subset(results, block == "K. Modifier" & contrast %in% main_contrasts)
+pm <- subset(results, block == "K. Modifier" & !grepl("intermediate dose", label))  # older runs replaced the high dose
 if (nrow(pm) == 0) {
   cat("No modifier-panel (K) results in the saved run yet: rerun the run chunk.\n")
 } else {
-  parts <- strsplit(pm$label, " | ", fixed = TRUE)
-  pm$OR       <- factor(sapply(parts, `[`, 1), levels = c("OR 3", "OR 5", "OR 10"))
-  pm$dose     <- sapply(parts, `[`, 2)
-  pm$founders <- sapply(parts, `[`, 3)
-  ggplot(pm, aes(OR, power_x1, colour = contrast, fill = contrast, group = contrast)) +
-    geom_line() + geom_point(shape = 21, colour = "black", size = 2.5) +
-    scale_colour_manual(values = contrast_cols) + scale_fill_manual(values = contrast_cols) +
-    facet_grid(founders ~ dose) +
-    scale_y_continuous(limits = c(0, 1)) +
+  pm$OR       <- as.numeric(sub("^OR ([0-9.]+).*", "\\1", pm$label))
+  pm$founders <- factor(sub(".*founders ", "", pm$label), levels = c("0.8/0.2", "1/0"),
+                        labels = c("Founders green 0.8 / yellow 0.2", "Founders green 1 / yellow 0"))
+  mod_contrasts <- c(GR_YS = "GR vs YS", MS_MD = "Third arm: survivors vs dead")
+  long_m <- subset(pm, contrast %in% names(mod_contrasts))
+  long_m$contrast_name <- factor(mod_contrasts[long_m$contrast], levels = mod_contrasts)
+  ggplot(long_m, aes(OR, power_x1, colour = contrast_name, shape = contrast_name)) +
+    geom_hline(yintercept = 0.8, linetype = 2, colour = "grey50") +
+    geom_line(linewidth = 0.8) + geom_point(size = 2.6) +
+    scale_colour_manual(values = unname(pal_dark[c("purple", "red")])) +
+    scale_x_log10(breaks = c(3, 5, 10)) +
+    facet_wrap(~ founders, nrow = 1) +
+    expand_limits(y = c(0, 1)) +
     labs(x = "Modifier effect (odds ratio on survival per allele)",
-         y = "Power for chr3 modifier (5% genome-wide FPR)", colour = "Contrast", fill = "Contrast") +
-    theme_bw()
+         y = "Power for the chr3 modifier", colour = NULL, shape = NULL,
+         subtitle = "Dashed line: 0.8 power") +
+    theme_bw() +
+    theme(panel.grid.minor = element_blank(), legend.position = "bottom")
 }
 ```
 
 ![](../figures/knitted_mds/LSPH_power_simulation_crossed-results-modifier-1.png)<!-- -->
 
 ``` r
-knitr::kable(pm[, c("label", "contrast", "power", "power_x1", "power_all_loci",
-                    "signal", "signal_x1", "n_GR", "n_YS")],
+knitr::kable(pm[, intersect(c("label", "contrast", "power", "power_x1", "power_all_loci",
+                              "signal", "signal_x1", "n_GR", "n_YS", "n_MS", "n_MD"), names(pm))],
              digits = 2, row.names = FALSE)
 ```
 
-| label                                          | contrast    | power | power_x1 | power_all_loci | signal | signal_x1 |   n_GR |  n_YS |
-|:-----------------------------------------------|:------------|------:|---------:|---------------:|-------:|----------:|-------:|------:|
-| OR 3 \| current dose \| founders 0.8/0.2       | GR_YS       |  1.00 |     0.04 |           0.04 |   2.75 |      0.44 |  91.53 | 98.88 |
-| OR 3 \| current dose \| founders 0.8/0.2       | GR_pair     |  0.47 |     0.00 |           0.00 |   0.97 |      0.34 |  91.53 | 98.88 |
-| OR 3 \| current dose \| founders 0.8/0.2       | GRsib_YSsib |  0.90 |     0.01 |           0.01 |   1.40 |      0.37 |  91.53 | 98.88 |
-| OR 3 \| current dose \| founders 0.8/0.2       | GR_ctrl     |  1.00 |     0.00 |           0.00 |   1.54 |      0.35 |  91.53 | 98.88 |
-| OR 5 \| current dose \| founders 0.8/0.2       | GR_YS       |  1.00 |     0.16 |           0.16 |   2.99 |      0.65 |  91.14 | 97.52 |
-| OR 5 \| current dose \| founders 0.8/0.2       | GR_pair     |  0.59 |     0.00 |           0.00 |   1.05 |      0.37 |  91.14 | 97.52 |
-| OR 5 \| current dose \| founders 0.8/0.2       | GRsib_YSsib |  0.92 |     0.02 |           0.02 |   1.37 |      0.41 |  91.14 | 97.52 |
-| OR 5 \| current dose \| founders 0.8/0.2       | GR_ctrl     |  1.00 |     0.04 |           0.04 |   1.77 |      0.40 |  91.14 | 97.52 |
-| OR 10 \| current dose \| founders 0.8/0.2      | GR_YS       |  1.00 |     0.30 |           0.30 |   2.79 |      0.83 |  90.72 | 94.97 |
-| OR 10 \| current dose \| founders 0.8/0.2      | GR_pair     |  0.49 |     0.01 |           0.00 |   1.00 |      0.40 |  90.72 | 94.97 |
-| OR 10 \| current dose \| founders 0.8/0.2      | GRsib_YSsib |  0.92 |     0.01 |           0.01 |   1.43 |      0.40 |  90.72 | 94.97 |
-| OR 10 \| current dose \| founders 0.8/0.2      | GR_ctrl     |  1.00 |     0.03 |           0.03 |   1.68 |      0.40 |  90.72 | 94.97 |
-| OR 3 \| intermediate dose \| founders 0.8/0.2  | GR_YS       |  1.00 |     0.08 |           0.08 |   2.46 |      0.53 | 100.00 | 99.18 |
-| OR 3 \| intermediate dose \| founders 0.8/0.2  | GR_pair     |  0.04 |     0.00 |           0.00 |   0.54 |      0.37 | 100.00 | 99.18 |
-| OR 3 \| intermediate dose \| founders 0.8/0.2  | GRsib_YSsib |  0.95 |     0.03 |           0.03 |   1.45 |      0.39 | 100.00 | 99.18 |
-| OR 3 \| intermediate dose \| founders 0.8/0.2  | GR_ctrl     |  0.49 |     0.03 |           0.01 |   1.00 |      0.35 | 100.00 | 99.18 |
-| OR 5 \| intermediate dose \| founders 0.8/0.2  | GR_YS       |  1.00 |     0.26 |           0.26 |   2.36 |      0.72 | 100.00 | 97.20 |
-| OR 5 \| intermediate dose \| founders 0.8/0.2  | GR_pair     |  0.03 |     0.01 |           0.00 |   0.51 |      0.36 | 100.00 | 97.20 |
-| OR 5 \| intermediate dose \| founders 0.8/0.2  | GRsib_YSsib |  0.84 |     0.01 |           0.01 |   1.30 |      0.37 | 100.00 | 97.20 |
-| OR 5 \| intermediate dose \| founders 0.8/0.2  | GR_ctrl     |  0.46 |     0.03 |           0.01 |   0.98 |      0.40 | 100.00 | 97.20 |
-| OR 10 \| intermediate dose \| founders 0.8/0.2 | GR_YS       |  1.00 |     0.42 |           0.42 |   2.45 |      0.92 | 100.00 | 93.72 |
-| OR 10 \| intermediate dose \| founders 0.8/0.2 | GR_pair     |  0.04 |     0.00 |           0.00 |   0.49 |      0.41 | 100.00 | 93.72 |
-| OR 10 \| intermediate dose \| founders 0.8/0.2 | GRsib_YSsib |  0.88 |     0.04 |           0.03 |   1.35 |      0.47 | 100.00 | 93.72 |
-| OR 10 \| intermediate dose \| founders 0.8/0.2 | GR_ctrl     |  0.30 |     0.03 |           0.00 |   0.87 |      0.36 | 100.00 | 93.72 |
-| OR 3 \| current dose \| founders 1/0           | GR_YS       |  1.00 |     0.28 |           0.28 |   3.11 |      0.79 |  89.44 | 98.63 |
-| OR 3 \| current dose \| founders 1/0           | GR_pair     |  0.48 |     0.01 |           0.01 |   1.00 |      0.44 |  89.44 | 98.63 |
-| OR 3 \| current dose \| founders 1/0           | GRsib_YSsib |  0.92 |     0.00 |           0.00 |   1.36 |      0.41 |  89.44 | 98.63 |
-| OR 3 \| current dose \| founders 1/0           | GR_ctrl     |  1.00 |     0.07 |           0.07 |   1.66 |      0.45 |  89.44 | 98.63 |
-| OR 5 \| current dose \| founders 1/0           | GR_YS       |  1.00 |     0.47 |           0.47 |   2.88 |      0.98 |  91.37 | 97.60 |
-| OR 5 \| current dose \| founders 1/0           | GR_pair     |  0.54 |     0.03 |           0.01 |   1.03 |      0.44 |  91.37 | 97.60 |
-| OR 5 \| current dose \| founders 1/0           | GRsib_YSsib |  0.94 |     0.02 |           0.02 |   1.39 |      0.44 |  91.37 | 97.60 |
-| OR 5 \| current dose \| founders 1/0           | GR_ctrl     |  1.00 |     0.08 |           0.08 |   1.61 |      0.51 |  91.37 | 97.60 |
-| OR 10 \| current dose \| founders 1/0          | GR_YS       |  1.00 |     0.91 |           0.91 |   3.20 |      1.42 |  91.44 | 94.33 |
-| OR 10 \| current dose \| founders 1/0          | GR_pair     |  0.41 |     0.01 |           0.00 |   0.94 |      0.38 |  91.44 | 94.33 |
-| OR 10 \| current dose \| founders 1/0          | GRsib_YSsib |  0.88 |     0.07 |           0.06 |   1.42 |      0.50 |  91.44 | 94.33 |
-| OR 10 \| current dose \| founders 1/0          | GR_ctrl     |  1.00 |     0.11 |           0.11 |   1.65 |      0.57 |  91.44 | 94.33 |
-| OR 3 \| intermediate dose \| founders 1/0      | GR_YS       |  1.00 |     0.20 |           0.20 |   2.40 |      0.79 | 100.00 | 98.54 |
-| OR 3 \| intermediate dose \| founders 1/0      | GR_pair     |  0.02 |     0.01 |           0.00 |   0.51 |      0.37 | 100.00 | 98.54 |
-| OR 3 \| intermediate dose \| founders 1/0      | GRsib_YSsib |  0.95 |     0.03 |           0.03 |   1.45 |      0.48 | 100.00 | 98.54 |
-| OR 3 \| intermediate dose \| founders 1/0      | GR_ctrl     |  0.30 |     0.04 |           0.00 |   0.92 |      0.40 | 100.00 | 98.54 |
-| OR 5 \| intermediate dose \| founders 1/0      | GR_YS       |  1.00 |     0.60 |           0.60 |   2.35 |      1.07 | 100.00 | 97.96 |
-| OR 5 \| intermediate dose \| founders 1/0      | GR_pair     |  0.06 |     0.00 |           0.00 |   0.51 |      0.35 | 100.00 | 97.96 |
-| OR 5 \| intermediate dose \| founders 1/0      | GRsib_YSsib |  0.84 |     0.04 |           0.04 |   1.27 |      0.49 | 100.00 | 97.96 |
-| OR 5 \| intermediate dose \| founders 1/0      | GR_ctrl     |  0.23 |     0.03 |           0.01 |   0.87 |      0.40 | 100.00 | 97.96 |
-| OR 10 \| intermediate dose \| founders 1/0     | GR_YS       |  1.00 |     0.87 |           0.87 |   2.25 |      1.35 | 100.00 | 93.77 |
-| OR 10 \| intermediate dose \| founders 1/0     | GR_pair     |  0.01 |     0.01 |           0.00 |   0.46 |      0.36 | 100.00 | 93.77 |
-| OR 10 \| intermediate dose \| founders 1/0     | GRsib_YSsib |  0.88 |     0.14 |           0.12 |   1.32 |      0.64 | 100.00 | 93.77 |
-| OR 10 \| intermediate dose \| founders 1/0     | GR_ctrl     |  0.20 |     0.05 |           0.01 |   0.82 |      0.52 | 100.00 | 93.77 |
+| label                     | contrast | power | power_x1 | power_all_loci | signal | signal_x1 |  n_GR |  n_YS | n_MS | n_MD |
+|:--------------------------|:---------|------:|---------:|---------------:|-------:|----------:|------:|------:|-----:|-----:|
+| OR 3 \| founders 0.8/0.2  | GR_YS    |  1.00 |     0.10 |           0.10 |   2.76 |      0.58 | 90.76 | 82.65 |  100 |  100 |
+| OR 3 \| founders 0.8/0.2  | GR_ctrl  |  1.00 |     0.01 |           0.01 |   3.02 |      0.37 | 90.76 | 82.65 |  100 |  100 |
+| OR 3 \| founders 0.8/0.2  | YS_ctrl  |  1.00 |     0.18 |           0.18 |   2.58 |      0.66 | 90.76 | 82.65 |  100 |  100 |
+| OR 3 \| founders 0.8/0.2  | MS_MD    |  1.00 |     0.01 |           0.01 |   1.82 |      0.39 | 90.76 | 82.65 |  100 |  100 |
+| OR 3 \| founders 0.8/0.2  | MS_ctrl  |  0.98 |     0.01 |           0.01 |   1.62 |      0.35 | 90.76 | 82.65 |  100 |  100 |
+| OR 3 \| founders 0.8/0.2  | MD_ctrl  |  0.96 |     0.01 |           0.01 |   1.70 |      0.31 | 90.76 | 82.65 |  100 |  100 |
+| OR 5 \| founders 0.8/0.2  | GR_YS    |  1.00 |     0.23 |           0.23 |   2.67 |      0.74 | 92.10 | 71.09 |  100 |  100 |
+| OR 5 \| founders 0.8/0.2  | GR_ctrl  |  1.00 |     0.01 |           0.01 |   2.79 |      0.32 | 92.10 | 71.09 |  100 |  100 |
+| OR 5 \| founders 0.8/0.2  | YS_ctrl  |  0.99 |     0.25 |           0.25 |   2.21 |      0.75 | 92.10 | 71.09 |  100 |  100 |
+| OR 5 \| founders 0.8/0.2  | MS_MD    |  1.00 |     0.06 |           0.06 |   1.93 |      0.49 | 92.10 | 71.09 |  100 |  100 |
+| OR 5 \| founders 0.8/0.2  | MS_ctrl  |  0.96 |     0.04 |           0.03 |   1.62 |      0.36 | 92.10 | 71.09 |  100 |  100 |
+| OR 5 \| founders 0.8/0.2  | MD_ctrl  |  0.98 |     0.06 |           0.06 |   2.11 |      0.42 | 92.10 | 71.09 |  100 |  100 |
+| OR 10 \| founders 0.8/0.2 | GR_YS    |  1.00 |     0.38 |           0.38 |   2.64 |      0.91 | 90.58 | 67.23 |  100 |  100 |
+| OR 10 \| founders 0.8/0.2 | GR_ctrl  |  1.00 |     0.02 |           0.02 |   2.97 |      0.36 | 90.58 | 67.23 |  100 |  100 |
+| OR 10 \| founders 0.8/0.2 | YS_ctrl  |  0.99 |     0.58 |           0.58 |   2.36 |      1.12 | 90.58 | 67.23 |  100 |  100 |
+| OR 10 \| founders 0.8/0.2 | MS_MD    |  1.00 |     0.03 |           0.03 |   1.87 |      0.45 | 90.58 | 67.23 |  100 |  100 |
+| OR 10 \| founders 0.8/0.2 | MS_ctrl  |  0.97 |     0.01 |           0.00 |   1.58 |      0.38 | 90.58 | 67.23 |  100 |  100 |
+| OR 10 \| founders 0.8/0.2 | MD_ctrl  |  1.00 |     0.02 |           0.02 |   2.04 |      0.42 | 90.58 | 67.23 |  100 |  100 |
+| OR 3 \| founders 1/0      | GR_YS    |  1.00 |     0.29 |           0.29 |   2.66 |      0.84 | 90.19 | 81.28 |  100 |  100 |
+| OR 3 \| founders 1/0      | GR_ctrl  |  1.00 |     0.01 |           0.01 |   2.94 |      0.38 | 90.19 | 81.28 |  100 |  100 |
+| OR 3 \| founders 1/0      | YS_ctrl  |  0.99 |     0.41 |           0.40 |   2.47 |      0.89 | 90.19 | 81.28 |  100 |  100 |
+| OR 3 \| founders 1/0      | MS_MD    |  1.00 |     0.07 |           0.07 |   1.90 |      0.51 | 90.19 | 81.28 |  100 |  100 |
+| OR 3 \| founders 1/0      | MS_ctrl  |  0.98 |     0.04 |           0.04 |   1.66 |      0.39 | 90.19 | 81.28 |  100 |  100 |
+| OR 3 \| founders 1/0      | MD_ctrl  |  0.97 |     0.04 |           0.04 |   1.93 |      0.41 | 90.19 | 81.28 |  100 |  100 |
+| OR 5 \| founders 1/0      | GR_YS    |  1.00 |     0.70 |           0.70 |   2.89 |      1.16 | 90.54 | 74.26 |  100 |  100 |
+| OR 5 \| founders 1/0      | GR_ctrl  |  1.00 |     0.06 |           0.06 |   3.08 |      0.41 | 90.54 | 74.26 |  100 |  100 |
+| OR 5 \| founders 1/0      | YS_ctrl  |  1.00 |     0.82 |           0.82 |   2.54 |      1.39 | 90.54 | 74.26 |  100 |  100 |
+| OR 5 \| founders 1/0      | MS_MD    |  1.00 |     0.11 |           0.11 |   1.87 |      0.57 | 90.54 | 74.26 |  100 |  100 |
+| OR 5 \| founders 1/0      | MS_ctrl  |  0.90 |     0.03 |           0.03 |   1.52 |      0.41 | 90.54 | 74.26 |  100 |  100 |
+| OR 5 \| founders 1/0      | MD_ctrl  |  0.99 |     0.07 |           0.07 |   1.94 |      0.46 | 90.54 | 74.26 |  100 |  100 |
+| OR 10 \| founders 1/0     | GR_YS    |  1.00 |     0.94 |           0.94 |   2.76 |      1.46 | 90.75 | 63.78 |  100 |  100 |
+| OR 10 \| founders 1/0     | GR_ctrl  |  1.00 |     0.04 |           0.04 |   2.86 |      0.37 | 90.75 | 63.78 |  100 |  100 |
+| OR 10 \| founders 1/0     | YS_ctrl  |  1.00 |     0.95 |           0.94 |   2.43 |      1.80 | 90.75 | 63.78 |  100 |  100 |
+| OR 10 \| founders 1/0     | MS_MD    |  1.00 |     0.06 |           0.06 |   1.77 |      0.60 | 90.75 | 63.78 |  100 |  100 |
+| OR 10 \| founders 1/0     | MS_ctrl  |  0.94 |     0.05 |           0.04 |   1.54 |      0.48 | 90.75 | 63.78 |  100 |  100 |
+| OR 10 \| founders 1/0     | MD_ctrl  |  0.98 |     0.06 |           0.06 |   1.95 |      0.45 | 90.75 | 63.78 |  100 |  100 |
 
 # 9. Choosing doses: F2 pilot design and F8 recommendations
 
@@ -1135,7 +1504,7 @@ How to read this:
   detectable there (panel K).
 
 Put the recommended doses into `dose_high` and `dose_low` in the
-baseline and rerun the simulation to check the signal at F8.
+reference design and rerun the simulation to check the signal at F8.
 
 # 10. Assumptions and not-yet-modelled
 

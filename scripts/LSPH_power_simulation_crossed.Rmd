@@ -47,15 +47,15 @@ N_CORES <- as.integer(Sys.getenv("SLURM_CPUS_ON_NODE", unset = "1"))
 mem_gb  <- as.numeric(Sys.getenv("SLURM_MEM_PER_NODE", unset = "32768")) / 1024
 N_CORES <- max(1, min(N_CORES, floor((mem_gb - 4) / 2.5)))
 ```
-
-RStudio Configuration:
-   - **R version:** R 4.4.0 (Geospatial packages)
-   - **Number of cores:** 28 (of 32 max, leaving some for others)
-   - **Memory:** 96 GB (about 2.5 GB per core + 4 GB; at 16 cores, 32 GB was too little and workers were killed)
-   - **Time:** the full run (107 scenarios) takes about 2.5 hours at 28 cores
-   - **Account:** saarman-np
-   - **Partition:** saarman-np
-
+   
+RStudio Configuration:   
+   - **R version:** R 4.4.0 (Geospatial packages)   
+   - **Number of cores:** 28 (of 32 max, leaving some for others)  
+   - **Memory:** 96 GB (about 2.5 GB per core + 4 GB; at 16   cores, 32 GB was too little and workers were killed)  
+   - **Time:** the full run (107 scenarios) takes about 2.5 hours at 28 cores  
+   - **Account:** saarman-np   
+   - **Partition:** saarman-np   
+  
 ```{r libraries, message=FALSE, include = FALSE}
 library(parallel)
 library(ggplot2)
@@ -71,9 +71,10 @@ pal_dark <- c(purple = "#5E4B7A", red = "#C2554B", teal = "#2F8C8D")
 
 RNGkind("L'Ecuyer-CMRG")   # reproducible random numbers across parallel workers
 set.seed(20261120)
+paste("Cores available to this session: ",N_CORES)
 ```
 
-Cores available to this session: `r N_CORES`.
+
 
 # 1. What this simulates
 
@@ -104,7 +105,7 @@ One replicate runs these steps:
    **YS** = dead at the low dose, from the most susceptible rafts.
    **MS / MD** = survivors / dead at the intermediate dose (third arm, aimed at modifiers).
    **Ctrl** = untreated sibs, one per raft. By default from randomly chosen assayed
-   rafts, so the Ctrl pools are a baseline sample of the whole F8, with as many Ctrl
+   rafts, so the Ctrl pools are a random sample of the whole F8, with as many Ctrl
    pools as GR + YS pools (fewer pools of full size if rafts run short). Block M
    compares this with Ctrl pools matched to the GR and YS rafts: kept separate (pools
    of 20), kept separate plus intermediate Ctrl pools from the rafts in neither GR nor YS,
@@ -112,19 +113,19 @@ One replicate runs these steps:
 5. **Sequencing:** each pool's green ancestry is the DNA-weighted mean of its 2N chromosomes, plus read-sampling error (depth × how informative the ancestry-informative SNPs are).
 6. **Scan:** pool-level ancestry compared window by window, with replicate pools as the units.
    GR vs YS (Welch t) is the discovery scan. GR vs Ctrl and YS vs Ctrl (Welch t) show which
-   arm moved away from the F8 baseline, which is how dominance is inferred.
+   arm moved away from the Ctrl pools, which is how dominance is inferred.
 
 Each design is also run with **null replicates**, where survival does not depend on genotype. The 95th percentile of the null genome-wide maximum −log10(p) is that design's threshold, so every power estimate is at a true 5% genome-wide false-positive rate.
 
-# 2. Baseline parameters
+# 2. Reference design
 
-The baseline is the current F8 plan. Values marked *placeholder* should be replaced with real numbers.
+The reference design (`base` in the code) is the set of values every scenario starts from; each scenario changes one or a few of them. Values marked *placeholder* should be replaced with real numbers.
 
 ```{r params-base}
 F2_RAFTS <- 200   # placeholder: number of egg rafts producing F2 (first F1 blood meal went well, Nov 2026)
 F8_RAFTS <- 300   # rafts produced at F8 (the assay rafts are drawn from these)
 
-base <- list(
+base <- list(   # the reference design: every scenario starts from these values
   ## Genome (placeholders: set from a Culex linkage map)
   ## idCulPipi1.1 physical sizes: chr1 128.5, chr2 213.1, chr3 190.9 Mb (533 Mb total)
   chrom_cM  = c(chr1 = 30, chr2 = 89, chr3 = 66),  # published Cx. quinquefasciatus map (likely an underestimate)
@@ -356,7 +357,7 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
   ## Ctrl: untreated sibs, one per raft, built in one of three ways (p$ctrl_design)
   C_by_raft <- matrix(which(type == "C"), nrow = n_c)    # column = raft
   if (p$ctrl_design == "random") {
-    ## random assayed rafts, regardless of phenotype: a baseline sample of the whole F8.
+    ## random assayed rafts, regardless of phenotype: a random sample of the whole F8.
     ## Never more Ctrl pools than GR + YS pools; if rafts run short, fewer pools of full size.
     n_pools_ctrl <- min(p$n_pools_GR + p$n_pools_YS, floor(A / p$N_per_pool))
     pick$ctrl    <- C_by_raft[1, sample.int(A, n_pools_ctrl * p$N_per_pool)]
@@ -417,8 +418,8 @@ simulate_replicate <- function(p, null = FALSE, keep = FALSE) {
   mlp_all <- list()
   ## Contrasts (Welch t on pool ancestry, pools as replicates):
   ##   GR_YS    survivors (high dose) vs dead (low dose): discovery
-  ##   GR_ctrl  GR vs Ctrl (F8 baseline): moves if resistance is recessive
-  ##   YS_ctrl  YS vs Ctrl (F8 baseline): moves if resistance is dominant
+  ##   GR_ctrl  GR vs Ctrl: moves if resistance is recessive
+  ##   YS_ctrl  YS vs Ctrl: moves if resistance is dominant
   ##   MS_MD    survivors vs dead at the intermediate dose (third arm; aimed at modifiers)
   ##   MS_ctrl, MD_ctrl  each third-arm pool type vs Ctrl
   contrasts <- list(GR_YS = c("GR", "YS"), GR_ctrl = c("GR", "ctrl"), YS_ctrl = c("YS", "ctrl"),
@@ -489,7 +490,7 @@ abline(v = base$causal_cM, lty = 2)
 
 # 6. Scenarios
 
-We vary **one thing at a time** from the baseline in panels A–G (design) and J
+We vary **one thing at a time** from the reference design in panels A–G (design) and J
 (things we can't control). Panels H and I cross each high or low dose with four
 possible heterozygote responses, because the best dose depends on a response the F2
 pilot will measure. Panel K adds a modifier of increasing strength on chr3 to the MAL.
@@ -544,7 +545,7 @@ scenarios <- list(
   list(block = "G. F2 pilot vs F8", label = "F2 pilot 3+3 pools, 200 rafts",
        changes = list(n_gen = 2, rafts = F2_RAFTS, n_assay_rafts = min(F2_RAFTS, 200),
                       n_pools_GR = 3, n_pools_YS = 3, n_mid = 0)),
-  list(block = "G. F2 pilot vs F8", label = "F8 baseline", changes = list()),
+  list(block = "G. F2 pilot vs F8", label = "F8 reference design", changes = list()),
 
   ## J. Sensitivity: things we don't control
   list(block = "J. Sensitivity", label = "p_res green 0.5",   changes = list(p_res_green = 0.5)),
@@ -563,7 +564,7 @@ scenarios <- list(
   list(block = "L. Combinations", label = "8 pools, 300 rafts",       changes = list(n_pools_GR = 8, n_pools_YS = 8, n_assay_rafts = 300)),
   list(block = "L. Combinations", label = "10 pools, 300 rafts",      changes = list(n_pools_GR = 10, n_pools_YS = 10, n_assay_rafts = 300)),
 
-  ## M. How the Ctrl pools are built (see ctrl_design in the baseline)
+  ## M. How the Ctrl pools are built (see ctrl_design in the reference design)
   list(block = "M. Ctrl design", label = "random, 200 rafts",          changes = list(ctrl_design = "random")),
   list(block = "M. Ctrl design", label = "matched, 200 rafts",         changes = list(ctrl_design = "matched")),
   list(block = "M. Ctrl design", label = "matched + intermediate, 200 rafts", changes = list(ctrl_design = "matched_plus")),
@@ -645,7 +646,7 @@ table(unlist(chk))
 chk[unlist(chk) != "ok"]   # scenarios that failed, with the error
 
 ## Pool sizes as intended?
-## Current plan: n_GR, n_YS, n_MS, n_MD ~100; n_ctrl 200 in 10 pools; n_rafts_both = n_rafts_neither
+## Reference design: n_GR, n_YS, n_MS, n_MD ~100; n_ctrl 200 in 10 pools; n_rafts_both = n_rafts_neither
 x <- simulate_replicate(base)
 x[c("n_GR", "n_YS", "n_ctrl", "n_pools_ctrl", "n_MS", "n_MD", "n_rafts_both", "n_rafts_neither")]
 ## Matched + intermediate Ctrl at 300 rafts: ~100+ rafts in neither list, ~15 Ctrl pools
@@ -793,7 +794,7 @@ if (length(rep_list) > 0) {
 results <- subset(results, block != "I. Modifier")
 results$block[results$block == "H. Sensitivity"] <- "J. Sensitivity"
 
-if (!identical(run$base, base))           warning("Baseline parameters changed since this run")
+if (!identical(run$base, base))           warning("Reference design changed since this run")
 if (!identical(run$scenarios, scenarios)) warning("Scenarios changed since this run")
 if (!identical(run$sim_code, deparse(utils::removeSource(simulate_replicate))))
   warning("simulate_replicate() changed since this run")
@@ -810,7 +811,7 @@ Contrasts (each has its own design-specific threshold):
 
 - `GR_YS` (**GR vs YS**): survivors at the high dose vs dead at the low dose. Discovery scan.
 - `GR_ctrl` (**GR vs Ctrl**) and `YS_ctrl` (**YS vs Ctrl**): each arm vs the Ctrl pools,
-  the F8 baseline. Which arm moves shows dominance: recessive moves GR, dominant moves YS.
+  a random sample of the F8. Which arm moves shows dominance: recessive moves GR, dominant moves YS.
 - `MS_MD`, `MS_ctrl`, `MD_ctrl`: third arm, survivors vs dead at the intermediate dose,
   and each vs Ctrl.
 
@@ -818,7 +819,7 @@ The current code builds Ctrl as one untreated sib from each assayed raft (slide 
 Runs saved before 2026-11-24 used Ctrl pools of sibs of the GR and YS rafts only, and
 also contain `GR_pair`, `YS_pair` and `GRsib_YSsib` contrasts that are no longer run.
 The saved main run (blocks A-G, J) and dose run (H, I, K) also disagree at nearly the
-same baseline (GR vs YS about 2.4 vs 3.0; YS vs Ctrl about 0.9 vs 1.6), more than marker
+same reference design (GR vs YS about 2.4 vs 3.0; YS vs Ctrl about 0.9 vs 1.6), more than marker
 spacing or a weak modifier should explain, so compare designs within a figure, not
 across runs, until both are rerun with the current code.
 
@@ -836,8 +837,8 @@ Columns:
 
 ## Which design levers matter
 
-Each row is one lever, varied with everything else at the current plan. Points are the
-tested levels, the bar spans them, and the open circle is the current plan. Levels are
+Each row is one lever, varied with everything else at the reference design. Points are the
+tested levels, the bar spans them, and the open circle is the reference design. Levels are
 named at the ends of rows that move by more than 0.3. Panels: GR vs YS, GR vs Ctrl,
 YS vs Ctrl.
 
@@ -850,7 +851,7 @@ lever_blocks <- c("C. Pools per phenotype", "D. Individuals per pool", "B. F8 ra
 lever_names  <- c("Pools per phenotype", "Larvae per pool", "F8 rafts assayed",
                   "Larvae per dose per raft", "Second blood meal", "Rafts per generation, F3-F7",
                   "Depth per larva")
-plan_labels  <- c("5", "20", "200", "40 per dose", "200 independent", "slow 80->175", "5x")   # current plan in each block
+plan_labels  <- c("5", "20", "200", "40 per dose", "200 independent", "slow 80->175", "5x")   # reference design in each block
 
 lv <- subset(results, block %in% lever_blocks & contrast %in% names(contrast_names) &
                label != "40, no third arm")
@@ -878,7 +879,7 @@ ggplot(lv, aes(signal_pooled, lever)) +
   expand_limits(x = 0) +
   facet_wrap(~ panel, nrow = 1) +
   labs(x = "Peak −log10(p) / threshold −log10(p)", y = NULL,
-       subtitle = "Open circle = current plan. Dashed line = 5% genome-wide threshold (1 = 50% power).") +
+       subtitle = "Open circle = reference design. Dashed line = 5% genome-wide threshold (1 = 50% power).") +
   theme_bw() +
   theme(panel.grid.minor = element_blank(), panel.grid.major.y = element_blank())
 ```
@@ -926,7 +927,7 @@ ggplot(cb, aes(cost_k, signal_pooled, colour = lever)) +
   facet_wrap(~ panel, nrow = 1) +
   labs(x = "F8 sequencing cost, GR + YS + Ctrl pools ($k)",
        y = "Peak −log10(p) / threshold −log10(p)",
-       subtitle = "Open circle = current plan (5 pools, 20 larvae, 5x). Open symbols = pools short of larvae.") +
+       subtitle = "Open circle = reference design (5 pools, 20 larvae, 5x). Open symbols = pools short of larvae.") +
   theme_bw() +
   theme(legend.position = "none", panel.grid.minor = element_blank())
 ```
@@ -951,7 +952,7 @@ many, more extreme rafts.
 rb <- subset(results, block %in% c("G. F2 pilot vs F8", "L. Combinations", "M. Ctrl design",
                                     "O. Larvae per raft in pools", "J. Sensitivity"))
 nice <- function(x) {
-  x <- sub("^F8 baseline$", "F8, current plan", x)
+  x <- sub("^F8 (baseline|reference design)$", "F8, reference design", x)
   x <- sub("3\\+3 pools", "3 + 3 pools", x)
   x <- sub("p_res green", "green r-allele frequency", x)
   x <- sub("p_res yellow", "yellow r-allele frequency", x)
@@ -969,23 +970,23 @@ long_r <- rbind(rob_metric("GR_YS",   rob_names[1], "signal_pooled"),
                 rob_metric("GR_YS",   rob_names[4], "peak_dist_cM"))
 long_r$metric   <- factor(long_r$metric, levels = rob_names)
 long_r$scenario <- factor(long_r$scenario,
-                          levels = rev(unique(c("F8, current plan", long_r$scenario))))
+                          levels = rev(unique(c("F8, reference design", long_r$scenario))))
 grp <- c("G. F2 pilot vs F8" = "F2 vs F8", "L. Combinations" = "Combinations",
          "M. Ctrl design" = "Ctrl design", "O. Larvae per raft in pools" = "Larvae per raft",
          "J. Sensitivity" = "Not controlled")
 long_r$group    <- factor(grp[long_r$block], levels = grp)
-plan_r <- subset(long_r, scenario == "F8, current plan")
+plan_r <- subset(long_r, scenario == "F8, reference design")
 thr_r  <- data.frame(metric = factor(rob_names[1:3], levels = rob_names), x = 1)
 
 ggplot(long_r, aes(value, scenario)) +
   geom_vline(data = thr_r, aes(xintercept = x), linetype = 2, colour = "grey50") +
   geom_vline(data = plan_r[, c("metric", "value")], aes(xintercept = value), colour = "grey75") +
-  geom_point(aes(fill = scenario == "F8, current plan"), shape = 21, colour = "black", size = 2.6) +
+  geom_point(aes(fill = scenario == "F8, reference design"), shape = 21, colour = "black", size = 2.6) +
   scale_fill_manual(values = c(`TRUE` = "white", `FALSE` = pal_dark[["purple"]]), guide = "none") +
   facet_grid(group ~ metric, scales = "free", space = "free_y") +
   expand_limits(x = 0) +
   labs(x = NULL, y = NULL,
-       subtitle = "Grey line = current plan; dashed line = 5% genome-wide threshold.") +
+       subtitle = "Grey line = reference design; dashed line = 5% genome-wide threshold.") +
   theme_bw() +
   theme(panel.grid.minor = element_blank())
 ```
@@ -1035,7 +1036,7 @@ Each cell is one dose (columns) under one hypothesis for the S/r LC50 (rows); th
 number is the signal. Top row: GR vs YS. Bottom row: that arm vs Ctrl (GR vs Ctrl for
 the high dose, YS vs Ctrl for the low dose), the comparison used to infer dominance. It
 weakens when heterozygotes end up in the arm, because the arm then looks more like the
-F8 baseline. Red = below threshold. Cells
+Ctrl pools. Red = below threshold. Cells
 where that arm's pools were under 80% filled say so. A column that is purple in both
 rows works whatever the F2 pilot finds.
 
@@ -1071,7 +1072,7 @@ if (nrow(dd) == 0) {
                          guide = guide_colourbar(barheight = unit(12, "lines"))) +
     facet_grid(row ~ arm, scales = "free_x") +
     labs(x = "Dose (ppm)", y = "S/r LC50 (ppm)",
-         subtitle = paste0("Current plan: high ", base$dose_high, " ppm, low ", base$dose_low, " ppm")) +
+         subtitle = paste0("Reference design: high ", base$dose_high, " ppm, low ", base$dose_low, " ppm")) +
     theme_bw() +
     theme(panel.grid = element_blank())
 }
@@ -1337,7 +1338,7 @@ How to read this:
 - The intermediate dose always falls between the other two. Whether it is worth the
   extra pools depends on whether a modifier becomes detectable there (panel K).
 
-Put the recommended doses into `dose_high` and `dose_low` in the baseline and rerun
+Put the recommended doses into `dose_high` and `dose_low` in the reference design and rerun
 the simulation to check the signal at F8.
 
 # 10. Assumptions and not-yet-modelled
